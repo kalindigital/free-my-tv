@@ -6,7 +6,9 @@ import android.graphics.Paint;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.TextPaint;
+import android.graphics.RectF;
 import android.text.TextUtils;
+import android.view.KeyEvent;
 import android.view.View;
 
 import java.text.SimpleDateFormat;
@@ -17,10 +19,15 @@ import java.util.Locale;
 /**
  * The screensaver as an information board on plain black: the clock and date, today's weather with the next hours,
  * the week's forecast and the day's top headlines. Redrawn once a minute, and the whole board moves a few pixels each
- * minute so nothing stays burned into the panel.
+ * minute so nothing stays burned into the panel. The arrows pick a headline and OK opens it ({@link Opener}).
  */
 final class InfoView extends View implements HomeData.Listener {
     private static final float LEFT = 120, RIGHT = 1800;
+    /** What a key does on the board: nothing here (the system's), handled, or ends the screensaver. */
+    static final int PASS = 0, HANDLED = 1, EXIT = 2;
+    private static final long IDLE_MS = 30_000;
+
+    interface Opener { void open(Rss.Headline headline); }
 
     private final HomeData data;
     private final News news;
@@ -30,6 +37,14 @@ final class InfoView extends View implements HomeData.Listener {
     private float k = 1;
     private Paint datePaint, clockPaint, tempPaint, rangePaint, cityPaint, smallPaint, smallDim, labelPaint, rule;
     private TextPaint headlinePaint, sourcePaint;
+    private Paint pill, hintPaint;
+    private final RectF row = new RectF();
+    private Opener opener;
+    private int selected = -1;     // the headline the arrows are on; -1: none (the board is just a clock)
+    private final Runnable idle = () -> {
+        selected = -1;
+        invalidate();
+    };
 
     private final Runnable tick = new Runnable() {
         @Override public void run() {
@@ -56,9 +71,13 @@ final class InfoView extends View implements HomeData.Listener {
         tick.run();
     }
 
+    void setOpener(Opener o) { opener = o; }
+
     void stop() {
         if (!running) return;
         running = false;
+        selected = -1;
+        handler.removeCallbacks(idle);
         handler.removeCallbacks(tick);
         data.removeListener(this);
         news.removeListener(this);
@@ -89,6 +108,10 @@ final class InfoView extends View implements HomeData.Listener {
         labelPaint.setLetterSpacing(0.12f);
         headlinePaint = new TextPaint(Ui.text(Ui.medium, 34 * k, 0xE6FFFFFF));
         sourcePaint = new TextPaint(Ui.text(Ui.regular, 26 * k, 0x73FFFFFF));
+        pill = new Paint(Paint.ANTI_ALIAS_FLAG);
+        pill.setColor(0x29FFFFFF);
+        hintPaint = Ui.text(Ui.medium, 22 * k, 0x66FFFFFF);
+        hintPaint.setTextAlign(Paint.Align.RIGHT);
         rule = new Paint();
         rule.setColor(0x1FFFFFFF);
         rule.setStrokeWidth(Math.max(1, 1.5f * k));
@@ -174,14 +197,52 @@ final class InfoView extends View implements HomeData.Listener {
         if (list.isEmpty()) return;
         c.drawLine(left, 720 * k, right, 720 * k, rule);
         c.drawText(Ui.tr("NOTÍCIAS DO DIA", "TODAY'S NEWS", "NOTICIAS DEL DÍA"), left, 764 * k, labelPaint);
+        c.drawText(selected < 0 ? Ui.tr("▲▼ para escolher", "▲▼ to pick", "▲▼ para elegir")
+                : Ui.tr("OK para ler  ·  Voltar para sair", "OK to read  ·  Back to leave", "OK para leer  ·  Atrás para salir"),
+                right, 764 * k, hintPaint);
         float base = 816 * k, line = 50 * k, width = right - left;
         for (int i = 0; i < list.size(); i++, base += line) {
             Rss.Headline item = list.get(i);
             String source = item.source.isEmpty() ? "" : "  ·  " + item.source;
             float sw = sourcePaint.measureText(source);
+            if (i == selected) {
+                row.set(left - 20 * k, base - 40 * k, right + 20 * k, base + 14 * k);
+                c.drawRoundRect(row, 14 * k, 14 * k, pill);
+            }
             CharSequence title = TextUtils.ellipsize(item.title, headlinePaint, width - sw, TextUtils.TruncateAt.END);
             c.drawText(title, 0, title.length(), left, base, headlinePaint);
             c.drawText(source, left + headlinePaint.measureText(title, 0, title.length()), base, sourcePaint);
         }
+    }
+
+    /** The remote on the board: ▲▼ pick a headline, OK opens it, Back leaves; volume and the like go on to the system. */
+    int key(KeyEvent e) {
+        int code = e.getKeyCode();
+        boolean down = e.getAction() == KeyEvent.ACTION_DOWN;
+        switch (code) {
+            case KeyEvent.KEYCODE_VOLUME_UP: case KeyEvent.KEYCODE_VOLUME_DOWN: case KeyEvent.KEYCODE_VOLUME_MUTE:
+            case KeyEvent.KEYCODE_POWER: case KeyEvent.KEYCODE_SLEEP:
+                return PASS;
+            case KeyEvent.KEYCODE_DPAD_UP: case KeyEvent.KEYCODE_DPAD_DOWN:
+            case KeyEvent.KEYCODE_DPAD_LEFT: case KeyEvent.KEYCODE_DPAD_RIGHT:
+            case KeyEvent.KEYCODE_DPAD_CENTER: case KeyEvent.KEYCODE_ENTER: case KeyEvent.KEYCODE_NUMPAD_ENTER:
+                break;
+            default:
+                return EXIT;    // Back and every other key: like any screensaver, it ends
+        }
+        List<Rss.Headline> list = news.headlines;
+        if (list.isEmpty()) return EXIT;    // nothing to pick: like before, any key ends it
+        if (!down) return HANDLED;
+        int n = list.size();
+        if (code == KeyEvent.KEYCODE_DPAD_DOWN) selected = selected < 0 ? 0 : Math.min(n - 1, selected + 1);
+        else if (code == KeyEvent.KEYCODE_DPAD_UP) selected = selected < 0 ? n - 1 : Math.max(0, selected - 1);
+        else if (code != KeyEvent.KEYCODE_DPAD_LEFT && code != KeyEvent.KEYCODE_DPAD_RIGHT) {
+            if (selected < 0) selected = 0;
+            else if (opener != null && selected < n) opener.open(list.get(selected));
+        }
+        handler.removeCallbacks(idle);
+        handler.postDelayed(idle, IDLE_MS);
+        invalidate();
+        return HANDLED;
     }
 }
