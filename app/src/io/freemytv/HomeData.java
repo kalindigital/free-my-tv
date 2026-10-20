@@ -34,8 +34,8 @@ final class HomeData {
     private static final String CURRENCY = Config.CURRENCY.trim().toUpperCase(Locale.ROOT);
     /** Binance quotes dollars as USDT. */
     private static final String QUOTE = CURRENCY.equals("USD") ? "USDT" : CURRENCY;
-    private static final String WEATHER_QUERY = "&current=temperature_2m,weather_code,is_day&daily=temperature_2m_max,temperature_2m_min,sunrise,sunset"
-            + "&hourly=temperature_2m,weather_code,is_day&timezone=auto&forecast_days=2";
+    private static final String WEATHER_QUERY = "&current=temperature_2m,weather_code,is_day&daily=temperature_2m_max,temperature_2m_min,sunrise,sunset,weather_code"
+            + "&hourly=temperature_2m,weather_code,is_day&timezone=auto&forecast_days=7";
 
     private static String weatherPlace() {
         return Prefs.latitude() + "," + Prefs.longitude();
@@ -95,6 +95,10 @@ final class HomeData {
         final List<Double> hourTemp = new ArrayList<>();
         final List<Integer> hourCode = new ArrayList<>();
         final List<Boolean> hourDay = new ArrayList<>();
+        // The week, starting today (for the screensaver): midnight of each day, high, low and code.
+        final List<Long> days = new ArrayList<>();
+        final List<Double> dayMax = new ArrayList<>(), dayMin = new ArrayList<>();
+        final List<Integer> dayCode = new ArrayList<>();
     }
 
     private static HomeData instance;
@@ -128,7 +132,8 @@ final class HomeData {
             // The cached forecast is for the city it was fetched for; another city means fetch again.
             if (w != null && weatherPlace().equals(cache.getString("weatherPlace", ""))) {
                 weather = parseWeather(w);
-                weatherAt = cache.getLong("weatherAt", 0);
+                // A cache from before the week's forecast: fetch again.
+                weatherAt = weather.days.isEmpty() ? 0 : cache.getLong("weatherAt", 0);
             }
         } catch (Exception ignored) {}
     }
@@ -210,6 +215,14 @@ final class HomeData {
         w.min = daily.getJSONArray("temperature_2m_min").getDouble(0);
         w.sunrise = localTime(daily.getJSONArray("sunrise").getString(0), zone);
         w.sunset = localTime(daily.getJSONArray("sunset").getString(0), zone);
+        JSONArray dates = daily.getJSONArray("time"), maxes = daily.getJSONArray("temperature_2m_max"),
+                mins = daily.getJSONArray("temperature_2m_min"), dayCodes = daily.optJSONArray("weather_code");
+        for (int i = 0; dayCodes != null && i < dates.length(); i++) {
+            w.days.add(localTime(dates.getString(i) + "T00:00", zone));
+            w.dayMax.add(maxes.getDouble(i));
+            w.dayMin.add(mins.getDouble(i));
+            w.dayCode.add(dayCodes.getInt(i));
+        }
         JSONObject hourly = o.optJSONObject("hourly");
         if (hourly != null) {
             JSONArray times = hourly.getJSONArray("time");

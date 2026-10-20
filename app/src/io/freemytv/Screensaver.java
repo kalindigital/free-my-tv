@@ -8,7 +8,7 @@ import android.service.dreams.DreamService;
  * doesn't change those timings. Any key exits.
  */
 public class Screensaver extends DreamService {
-    private DreamView view;
+    private InfoView view;
 
     @Override public void onAttachedToWindow() {
         super.onAttachedToWindow();
@@ -17,7 +17,7 @@ public class Screensaver extends DreamService {
         setInteractive(false);
         setFullscreen(true);
         setScreenBright(true);
-        view = new DreamView(this);
+        view = new InfoView(this);
         setContentView(view);
     }
 
