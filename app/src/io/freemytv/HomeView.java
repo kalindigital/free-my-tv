@@ -93,11 +93,15 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private static final float L_TALL_W = 320, L_CARD_GAP = 40, L_BUTTON = 68, L_BUTTON_GAP = 20, L_BUTTON_CY = 103;
     private static final float L_PLATTER_TOP = 814, L_TILE_H = 126;
     private static final int L_INK = 0xFF1D1D1F, L_DIM = 0xFF6E6E73, L_FAINT = 0xFF8E8E93;
-    private static final String[] TABS = {"Explorar", "Filmes", "Séries"};
-    private static final String[] TABS_EN = {"Explore", "Movies", "Shows"};
-    private static final String[] TABS_ES = {"Explorar", "Películas", "Series"};
-    private static final String[] TAB_KIND = {null, "movie", "tv"};
-    private static final int Z_TOP = 4, Z_CARDS = 5, Z_CINEMA = 6;
+    private static final String[] TABS = {"Explorar", "Filmes", "Séries", "Mercado", "Buscar"};
+    private static final String[] TABS_EN = {"Explore", "Movies", "Shows", "Markets", "Search"};
+    private static final String[] TABS_ES = {"Explorar", "Películas", "Series", "Mercados", "Buscar"};
+    private static final String[] TAB_KIND = {null, "movie", "tv", null, null};
+    /** The tabs; at the top, the tabs come first (0 to NT - 1) and the three icon-only buttons after them. */
+    private static final int NT = TABS.length, T_MARKET = 3, T_SEARCH = 4;
+    private static final int Z_TOP = 4, Z_CARDS = 5, Z_CINEMA = 6, Z_MARKET = 7, Z_SEARCH = 8;
+    // Markets: 4 × 2 cards; Search: the field, then the results as Cinemora rows (a little smaller).
+    private static final float M_TOP = 262, M_H = 240, M_GAP = 30, S_H = 68, S_W = 900, S_DY = 90, S_SCALE = 0.8f;
     // Movies and Shows with Cinemora: one category row of 2:3 posters at a time (▲▼ change the category).
     private static final float C_ROW_TITLE = 300, C_TOP = 330, C_W = 220, C_H = 330, C_GAP = 30;
 
@@ -107,6 +111,22 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private final Recs recs;
     private final Cinemora cinemora;
     private int cinemaRow, cinemaCol, cinemaFirst;
+    private final Market market = Market.get();
+    private final Runnable onMarket = () -> { if (this.tab == T_MARKET) this.heroDirty = true; };
+    private int marketIndex;
+    private String searchQuery = "", greetingShown = "";
+    private SearchInput searchInput;
+    private final Runnable runSearch = this::searchNow;
+    private Paint mValue, mChange;
+    private final Path spark = new Path();
+    private final Paint sparkPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    {
+        sparkPaint.setStyle(Paint.Style.STROKE);
+        sparkPaint.setStrokeJoin(Paint.Join.ROUND);
+    }
+
+    /** Opens the TV's keyboard for the search field (HomeActivity holds the hidden text field). */
+    interface SearchInput { void start(String current); }
     private final Click click;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final SharedPreferences ui;
@@ -133,11 +153,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private boolean nightPair;          // the glass holds both photos (day and night), blended by `night`
     private Shader nightGradient;
 
-    // At the top: tabs (0 to 2) and icon-only buttons (3 to 5); the three cards
+    // At the top: tabs (0 to NT - 1) and icon-only buttons (NT to NT + 2); the three cards
     private int tab, topIndex, cardIndex;
     private List<Recs.Pick> cards = new ArrayList<>();
-    private final Spring[] topFocus = new Spring[6];
-    private final RectF[] topRects = new RectF[6];
+    private final Spring[] topFocus = new Spring[NT + 3];
+    private final RectF[] topRects = new RectF[NT + 3];
     private final Spring[] cardFocus = new Spring[3];
     private final RectF[] cardRects = new RectF[3];
     private final List<HomeApps.Item> lightButtons = new ArrayList<>();
@@ -295,6 +315,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             data.refreshIfStale();
             recs.refreshIfStale();
             cinemora.refreshIfStale();
+            if (tab == T_MARKET) market.refreshIfStale();
+            if (!greeting().equals(greetingShown)) heroDirty = true;   // morning, afternoon, evening
             checkNotices();
             updatePalette();
             checkNight(true);
@@ -332,7 +354,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
         setContentDescription("Free My TV");
         drawerLayer.setVisibility(INVISIBLE);
-        for (int i = 0; i < 6; i++) {
+        for (int i = 0; i < NT + 3; i++) {
             topFocus[i] = new Spring(0.26f, 0.85f, 0);
             topRects[i] = new RectF();
         }
@@ -350,6 +372,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         setShelf(HomeApps.shelf(a, false));
         setStatusItems(statusList(a));
         setDrawerItems(drawerList(a));
+        restore();
     }
 
     // MARK: - Lifecycle (called by HomeActivity)
@@ -364,6 +387,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         data.addListener(this);
         recs.addListener(this);
         cinemora.addListener(this);
+        market.addListener(onMarket);
+        if (tab == T_MARKET) market.refreshIfStale();
         data.refreshIfStale();
         recs.refreshIfStale();
         cinemora.refreshIfStale();
@@ -389,12 +414,63 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         data.removeListener(this);
         recs.removeListener(this);
         cinemora.removeListener(this);
+        market.removeListener(onMarket);
+        handler.removeCallbacks(runSearch);
         if (tvInputs != null) tvInputs.unregisterCallback(inputCallback);
     }
 
     void destroy() {
         pause();
+        save();
         click.release();
+    }
+
+    /**
+     * Where the focus was, kept in the process across a re-created home screen. Some TVs (this TCL has "Don't keep
+     * activities" on) destroy the home screen as soon as anything opens over it, so Back from a chart, Cinemora or an
+     * app built it again from the start. The Home button still starts over (onNewIntent → reset).
+     */
+    private static final class Saved {
+        int tab, zone, shelfIndex, topIndex, cardIndex, cinemaRow, cinemaCol, cinemaFirst, marketIndex;
+        String query = "";
+        long at;
+    }
+    private static Saved saved;
+    private static final long SAVED_MS = 30 * 60_000L;
+
+    private void save() {
+        Saved s = new Saved();
+        s.tab = tab;
+        s.zone = zone == Z_DRAWER || zone == Z_STATUS || zone == Z_HERO ? Z_SHELF : zone;
+        s.shelfIndex = shelfIndex;
+        s.topIndex = topIndex;
+        s.cardIndex = cardIndex;
+        s.cinemaRow = cinemaRow;
+        s.cinemaCol = cinemaCol;
+        s.cinemaFirst = cinemaFirst;
+        s.marketIndex = marketIndex;
+        s.query = searchQuery;
+        s.at = SystemClock.uptimeMillis();
+        saved = s;
+    }
+
+    private void restore() {
+        Saved s = saved;
+        saved = null;
+        if (s == null || SystemClock.uptimeMillis() - s.at > SAVED_MS) return;
+        if (s.tab != 0) selectTab(s.tab);
+        zone = s.zone;
+        shelfIndex = Math.min(s.shelfIndex, Math.max(0, shelf.size() - 1));
+        topIndex = s.topIndex;
+        cardIndex = s.cardIndex;
+        cinemaRow = s.cinemaRow;
+        cinemaCol = s.cinemaCol;
+        cinemaFirst = s.cinemaFirst;
+        marketIndex = s.marketIndex;
+        searchQuery = s.query;
+        if (!searchQuery.isEmpty()) cinemora.search(searchQuery);
+        updateCards();      // a zone whose items aren't there (yet) falls back to the shelf
+        retarget(true);
     }
 
     /** Starting state (Home pressed while the home screen is showing): first app focused, drawer and sheet closed. */
@@ -450,7 +526,32 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     /** Cinemora's rows for the selected tab (Movies or Shows); empty: the tab shows the TMDB picks as before. */
     private List<Cinemora.Row> cinemaRows() {
-        return tab > 0 ? cinemora.rows(TAB_KIND[tab]) : java.util.Collections.<Cinemora.Row>emptyList();
+        if (tab == T_SEARCH) return searchQuery.trim().equals(cinemora.foundFor()) ? cinemora.found()
+                : java.util.Collections.<Cinemora.Row>emptyList();
+        return TAB_KIND[tab] != null ? cinemora.rows(TAB_KIND[tab]) : java.util.Collections.<Cinemora.Row>emptyList();
+    }
+
+    void setSearchInput(SearchInput input) { searchInput = input; }
+
+    private void searchNow() { cinemora.search(searchQuery); }
+
+    /** What's typed in the search field (from HomeActivity's text field): searched 400 ms after the last key. */
+    void setQuery(String q) {
+        searchQuery = q == null ? "" : q;
+        cinemaRow = cinemaCol = cinemaFirst = 0;
+        handler.removeCallbacks(runSearch);
+        handler.postDelayed(runSearch, 400);
+        heroDirty = true;
+    }
+
+    /** "Bom dia, Guilherme" (the name from config.properties; without one, just the greeting). */
+    private static String greeting() {
+        int hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY);
+        String g = hour >= 5 && hour < 12 ? Ui.tr("Bom dia", "Good morning", "Buenos días")
+                : hour >= 12 && hour < 18 ? Ui.tr("Boa tarde", "Good afternoon", "Buenas tardes")
+                : Ui.tr("Boa noite", "Good evening", "Buenas noches");
+        String name = Prefs.name();
+        return name.isEmpty() ? g : g + ", " + name;
     }
 
     private boolean cinema() {
@@ -539,6 +640,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         lCardTitle = Ui.text(Ui.semibold, 31 * k, L_INK);
         lCardTitle.setLetterSpacing(0.012f);
         lCardMeta = Ui.text(Ui.medium, 25 * k, L_DIM);
+        mValue = Ui.numbers(Ui.semibold, 40 * k, L_INK);
+        mChange = Ui.numbers(Ui.semibold, 26 * k, UP_COLOR);
         lQuote = Ui.numbers(Ui.regular, 21 * k, L_FAINT);
         lTip = Ui.text(Ui.semibold, 25 * k, L_INK);
         lTip.setTextAlign(Paint.Align.CENTER);
@@ -1121,7 +1224,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         Paint text = lQuote;
         // The corner buttons' names appear in this row: the quotes fade out while one of them has focus.
         float fade = 1;
-        for (int i = 3; i < 6; i++) fade = Math.min(fade, 1 - Ui.clamp(topFocus[i].value));
+        for (int i = NT; i < NT + 3; i++) fade = Math.min(fade, 1 - Ui.clamp(topFocus[i].value));
         if (fade <= 0.01f) return;
         int textColor = text.getColor();
         text.setColor(Ui.alpha(textColor, fade));
@@ -1837,7 +1940,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             closeDrawer();
             retarget(false);
         } else if (zone != Z_SHELF) {
-            if (zone == Z_CINEMA) heroDirty = true;
+            if (zone >= Z_CINEMA) heroDirty = true;
             zone = Z_SHELF;
             retarget(false);
         } else {
@@ -1969,12 +2072,21 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             it = drawerItems.get(drawerIndex);
             r = drawerRects[drawerIndex];
         } else if (zone == Z_TOP) {
-            if (topIndex < 3) {
+            if (topIndex < NT) {
                 selectTab(topIndex);
                 return;
             }
-            it = lightButtons.get(topIndex - 3);
+            it = lightButtons.get(topIndex - NT);
             r = topRects[topIndex];
+        } else if (zone == Z_MARKET) {
+            click.open();
+            activity.startActivity(new android.content.Intent(activity, MarketActivity.class)
+                    .putExtra(MarketActivity.EXTRA_ASSET, marketIndex));
+            return;
+        } else if (zone == Z_SEARCH) {
+            click.open();
+            if (searchInput != null) searchInput.start(searchQuery);
+            return;
         } else if (zone == Z_CINEMA) {
             List<Cinemora.Row> rows = cinemaRows();
             if (cinemaRow >= rows.size() || cinemaCol >= rows.get(cinemaRow).items.size()) return;
@@ -2030,7 +2142,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             for (int i = 0; i < others.size(); i++) out.add(a11yId(GRID, i));
             return;
         }
-        for (int i = 0; i < 3 + lightButtons.size(); i++) out.add(a11yId(Z_TOP, i));
+        for (int i = 0; i < NT + lightButtons.size(); i++) out.add(a11yId(Z_TOP, i));
         for (int i = 0; i < Math.min(3, cards.size()); i++) out.add(a11yId(Z_CARDS, i));
         for (int i = 0; i < shelf.size(); i++) out.add(a11yId(Z_SHELF, i));
         for (int i = 0; i < drawerItems.size(); i++) out.add(a11yId(Z_DRAWER, i));
@@ -2044,7 +2156,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 return label(others, i) + ", " + (i + 1) + Ui.tr(" de ", " of ") + others.size();
             case Z_TOP:
                 if (i >= 3) return label(lightButtons, i - 3);
-                return tabs()[i] + Ui.tr(", aba ", ", tab ") + (i + 1) + Ui.tr(" de 3", " of 3");
+                return tabs()[i] + Ui.tr(", aba ", ", tab ") + (i + 1) + Ui.tr(" de ", " of ") + NT;
             case Z_CARDS: return i < cards.size() ? pickText(cards.get(i)) : "";
             case Z_SHELF: return label(shelf, i);
             case Z_DRAWER: return label(drawerItems, i);
@@ -2070,9 +2182,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 break;
             }
             case Z_TOP:
-                if (i >= 3 + lightButtons.size()) return false;
+                if (i >= NT + lightButtons.size()) return false;
                 a11yRect.set(topRects[i]);
-                dy = (i < 3 ? heroLayer : status).getTranslationY();
+                dy = (i < NT ? heroLayer : status).getTranslationY();
                 break;
             case Z_CARDS:
                 if (i >= Math.min(3, cards.size())) return false;
@@ -2130,10 +2242,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 drawerIndex = i;
                 break;
             case Z_TOP:
-                if (i >= 3 + lightButtons.size()) return;
+                if (i >= NT + lightButtons.size()) return;
                 if (drawerOpen) closeDrawer();
                 topIndex = i;
-                if (i < 3) selectTab(i);
+                if (i < NT) selectTab(i);
                 break;
             case Z_CARDS:
                 if (i >= cards.size()) return;
@@ -2174,14 +2286,14 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         // Text tabs; the focus pill extends 26 px past the text (the first tab's text starts at the margin).
         float pad = 26 * k, tabTop = L_TABBAR_TOP * k, tabBottom = (L_TABBAR_TOP + L_TABBAR_H) * k;
         float x = MARGIN * k - pad;
-        for (int i = 0; i < 3; i++) {
+        for (int i = 0; i < NT; i++) {
             float tw = Math.max(lTabOn.measureText(tabs()[i]), lTab.measureText(tabs()[i]));
             topRects[i].set(x, tabTop, x + tw + 2 * pad, tabBottom);
             x = topRects[i].right + 4 * k;
         }
         float b = L_BUTTON * k, right = CONTENT_R * k, cy = L_BUTTON_CY * k;
         for (int i = 2; i >= 0; i--) {
-            topRects[3 + i].set(right - b, cy - b / 2, right, cy + b / 2);
+            topRects[NT + i].set(right - b, cy - b / 2, right, cy + b / 2);
             right -= b + L_BUTTON_GAP * k;
         }
         float top = L_CARDS_TOP * k, ch = L_CARD_H * k, g = L_CARD_GAP * k, left = MARGIN * k, tall = L_TALL_W * k;
@@ -2195,7 +2307,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     /** The three cards of the current tab (Explore, Movies, Shows) and the background taken from the first one. */
     private void updateCards() {
-        List<Recs.Pick> list = cinema() ? new ArrayList<>() : recs.now(TAB_KIND[tab]);
+        List<Recs.Pick> list = tab >= T_MARKET || cinema() ? new ArrayList<>() : recs.now(TAB_KIND[tab]);
         if (zone == Z_CINEMA && !cinema()) {
             zone = Z_SHELF;
             retarget(false);
@@ -2219,6 +2331,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (index == tab) return;
         tab = index;
         cinemaRow = cinemaCol = cinemaFirst = 0;
+        if (tab == T_MARKET) market.refreshIfStale();
         updateCards();
         heroDirty = true;
     }
@@ -2263,12 +2376,13 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     private void drawLightTop(Canvas c) {
         applyTone();
-        String hello = Ui.tr("Para você", "For You");
+        String hello = greeting();
+        greetingShown = hello;
         c.drawText(hello, MARGIN * k - Ui.leftBearing(lTitle, hello), L_TITLE_BASE * k, lTitle);
         // Text tabs (the selected one in bold, in the main text color); with focus on the tabs, the selected one gets
         // the white pill with a shadow and grows a little (the tvOS focus).
         float focus = Ui.clamp(topFocus[tab].value);
-        for (int i = 0; i < 3; i++) {
+        for (int i = 0; i < NT; i++) {
             RectF r = topRects[i];
             if (i == tab && focus > 0.01f) {
                 float s = 1 + 0.05f * focus;
@@ -2289,8 +2403,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             if (i == tab) lTabOn.setColor(blend(tone(L_INK, WHITE), L_INK, focus));   // always dark on the white pill
             c.drawText(tabs()[i], r.centerX() - p.measureText(tabs()[i]) / 2, r.centerY() + Ui.halfCap(p), p);
         }
-        if (cinema()) {
-            drawCinema(c);
+        if (tab == T_MARKET) {
+            drawMarket(c);
+        } else if (tab == T_SEARCH) {
+            drawSearch(c);
+        } else if (cinema()) {
+            drawCinema(c, 0, 1);
         } else {
             int top = -1;
             for (int i = 0; i < 3; i++) if (cardFocus[i].value > 0.02f && (top < 0 || cardFocus[i].value > cardFocus[top].value)) top = i;
@@ -2349,8 +2467,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
     }
 
-    private int cinemaVisible() {
-        return (int) ((CONTENT_R - MARGIN + C_GAP) / (C_W + C_GAP));
+    private int cinemaVisible(float scale) {
+        return (int) ((CONTENT_R - MARGIN + C_GAP * scale) / ((C_W + C_GAP) * scale));
     }
 
     /**
@@ -2358,23 +2476,24 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
      * border, like the cards) and, under it, the focused title with its year and rating. ▲▼ go through the categories
      * in Cinemora's order; the next one's name shows on the right (Inter has no ▾).
      */
-    private void drawCinema(Canvas c) {
+    private void drawCinema(Canvas c, float dy, float scale) {
         List<Cinemora.Row> rows = cinemaRows();
         cinemaRow = Math.min(cinemaRow, rows.size() - 1);
         Cinemora.Row row = rows.get(cinemaRow);
         cinemaCol = Math.min(cinemaCol, row.items.size() - 1);
-        int visible = cinemaVisible();
+        int visible = cinemaVisible(scale);
         if (cinemaCol < cinemaFirst) cinemaFirst = cinemaCol;
         if (cinemaCol >= cinemaFirst + visible) cinemaFirst = cinemaCol - visible + 1;
         cinemaFirst = Math.max(0, Math.min(cinemaFirst, Math.max(0, row.items.size() - visible)));
         boolean focusedRow = zone == Z_CINEMA && !sheetOpen;
-        float left = MARGIN * k, top = C_TOP * k, cw = C_W * k, ch = C_H * k, gap = C_GAP * k, r0 = 16 * k;
+        float left = MARGIN * k, top = (C_TOP + dy) * k, cw = C_W * k * scale, ch = C_H * k * scale, gap = C_GAP * k * scale;
+        float r0 = 16 * k * scale;
 
-        c.drawText(row.title, left, C_ROW_TITLE * k, lCardTitle);
+        c.drawText(row.title, left, (C_ROW_TITLE + dy) * k, lCardTitle);
         String where = (cinemaRow + 1) + " / " + rows.size()
                 + (cinemaRow + 1 < rows.size() ? Ui.tr("   ·   A seguir: ", "   ·   Next: ", "   ·   Siguiente: ")
                 + rows.get(cinemaRow + 1).title : "");
-        c.drawText(where, CONTENT_R * k - lCardMeta.measureText(where), C_ROW_TITLE * k, lCardMeta);
+        c.drawText(where, CONTENT_R * k - lCardMeta.measureText(where), (C_ROW_TITLE + dy) * k, lCardMeta);
 
         int focused = focusedRow ? cinemaCol : -1;
         for (int pass = 0; pass < 2; pass++) {      // the focused poster last, over its neighbours
@@ -2426,6 +2545,100 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
     }
 
+    /** The Markets card i (4 columns, 2 rows). */
+    private void marketRect(int i, RectF out) {
+        float gap = M_GAP * k, cw = ((CONTENT_R - MARGIN) * k - 3 * gap) / 4, ch = M_H * k;
+        float x = MARGIN * k + (i % 4) * (cw + gap), y = M_TOP * k + (i / 4) * (ch + gap);
+        out.set(x, y, x + cw, y + ch);
+    }
+
+    /**
+     * Markets: a card per asset with its name, price, the day's change (green up, red down) and the day's chart; the
+     * focused one grows and lights its border, and OK opens the big chart (MarketActivity).
+     */
+    private void drawMarket(Canvas c) {
+        int focused = zone == Z_MARKET && !sheetOpen ? marketIndex : -1;
+        for (int pass = 0; pass < 2; pass++) {
+            for (int i = 0; i < Market.ASSETS.length; i++) {
+                if ((i == focused) != (pass == 1)) continue;
+                Market.Asset a = Market.ASSETS[i];
+                Market.Quote q = market.quotes[i];
+                float f = i == focused ? 1 : 0, s = 1 + 0.04f * f;
+                marketRect(i, tmp);
+                float cx = tmp.centerX(), cy = tmp.centerY() - 4 * k * f, bw = tmp.width() * s, bh = tmp.height() * s;
+                cell.set(cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2);
+                float r = 22 * k * s;
+                tmp.set(cell);
+                tmp.offset(0, (8 + 10 * f) * k);
+                shadowDeep.setColor(Ui.alpha(0xFF000000, tone(0.1f, 0.3f) + tone(0.14f, 0.2f) * f));
+                shadows.draw(c, tmp, r, DEEP_BLUR * k, shadowDeep);
+                fill.setShader(null);
+                fill.setColor(f > 0 ? 0xFFFFFFFF : tone(0xEBFFFFFF, 0xFF1C1C1E));
+                c.drawRoundRect(cell, r, r, fill);
+                int ink = f > 0 ? L_INK : tone(L_INK, WHITE), dim = f > 0 ? L_DIM : tone(L_DIM, 0x99FFFFFF);
+                float x = cell.left + 26 * k;
+                lCardMeta.setColor(dim);
+                c.drawText(a.name, x, cell.top + 46 * k, lCardMeta);
+                mValue.setColor(ink);
+                c.drawText(Market.format(a, q.price), x, cell.top + 100 * k, mValue);
+                boolean up = !(q.change < 0);
+                mChange.setColor(up ? UP_COLOR : DOWN_COLOR);
+                c.drawText(Market.percent(q.change), x, cell.top + 140 * k, mChange);
+                if (q.closes.length > 1) {
+                    double min = Double.MAX_VALUE, max = -Double.MAX_VALUE;
+                    for (double v : q.closes) { min = Math.min(min, v); max = Math.max(max, v); }
+                    if (max - min < 1e-9) max = min + 1;
+                    float sl = x, sr = cell.right - 26 * k, st = cell.top + 160 * k, sb = cell.bottom - 22 * k;
+                    spark.reset();
+                    for (int j = 0; j < q.closes.length; j++) {
+                        float px = sl + (sr - sl) * j / (q.closes.length - 1f);
+                        float py = (float) (sb - (sb - st) * (q.closes[j] - min) / (max - min));
+                        if (j == 0) spark.moveTo(px, py); else spark.lineTo(px, py);
+                    }
+                    sparkPaint.setStrokeWidth(3 * k);
+                    sparkPaint.setColor(up ? UP_COLOR : DOWN_COLOR);
+                    c.drawPath(spark, sparkPaint);
+                }
+            }
+        }
+        lCardMeta.setColor(tone(L_DIM, 0xFF98989D));
+    }
+
+    /** Search: the field (OK opens the TV's keyboard; the mic in it works too) and Cinemora's results under it. */
+    private void drawSearch(Canvas c) {
+        boolean on = zone == Z_SEARCH && !sheetOpen;
+        float left = MARGIN * k, top = M_TOP * k, h = S_H * k, rr = h / 2;
+        cell.set(left, top, left + S_W * k, top + h);
+        if (on) {
+            tmp.set(cell);
+            tmp.offset(0, 8 * k);
+            shadow.setColor(Ui.alpha(0xFF000000, tone(0.22f, 0.4f)));
+            shadows.draw(c, tmp, rr, SHADOW_BLUR * k, shadow);
+        }
+        fill.setShader(null);
+        fill.setColor(on ? 0xFFFFFFFF : tone(0xB3FFFFFF, 0x33FFFFFF));
+        c.drawRoundRect(cell, rr, rr, fill);
+        boolean empty = searchQuery.isEmpty();
+        String text = empty ? Ui.tr("Buscar filmes e séries no Cinemora", "Search Cinemora's movies and shows",
+                "Buscar películas y series en Cinemora") : searchQuery;
+        lTab.setColor(on ? (empty ? L_DIM : L_INK) : tone(empty ? L_DIM : L_INK, empty ? 0x99FFFFFF : WHITE));
+        c.drawText(TextUtils.ellipsize(text, new TextPaint(lTab), cell.width() - 64 * k, TextUtils.TruncateAt.END).toString(),
+                cell.left + 32 * k, cell.centerY() + Ui.halfCap(lTab), lTab);
+        lTab.setColor(tone(L_DIM, 0xFF8E8E93));
+        String note = null;
+        if (!cinemora.available()) {
+            note = Ui.tr("Instale o Cinemora e entre na sua conta para buscar.", "Install Cinemora and sign in to search.",
+                    "Instala Cinemora e inicia sesión para buscar.");
+        } else if (!empty && searchQuery.trim().equals(cinemora.foundFor()) && cinemora.found().isEmpty()) {
+            note = Ui.tr("Nada encontrado para “", "Nothing found for “", "Nada encontrado para “") + searchQuery.trim() + "”.";
+        } else if (empty) {
+            note = Ui.tr("OK para digitar ou falar pelo teclado da TV.", "OK to type or speak with the TV's keyboard.",
+                    "OK para escribir o hablar con el teclado del TV.");
+        }
+        if (note != null) c.drawText(note, left, top + h + 60 * k, lCardMeta);
+        if (cinema()) drawCinema(c, S_DY, S_SCALE);
+    }
+
     /**
      * Live TV, HDMI Inputs and Settings: icon-only glass circles (light by day, smoked at night); the focused one turns
      * white with a dark icon (the tvOS focus) and its name appears below it.
@@ -2433,8 +2646,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private void drawLightButtons(Canvas c) {
         applyTone();
         for (int i = 0; i < 3; i++) {
-            RectF r = topRects[3 + i];
-            float f = Ui.clamp(topFocus[3 + i].value), s = 1 + 0.1f * f, rad = r.width() / 2 * s;
+            RectF r = topRects[NT + i];
+            float f = Ui.clamp(topFocus[NT + i].value), s = 1 + 0.1f * f, rad = r.width() / 2 * s;
             cell.set(r.centerX() - rad, r.centerY() - rad, r.centerX() + rad, r.centerY() + rad);
             tmp.set(cell);
             tmp.offset(0, (6 + 8 * f) * k);
@@ -2463,7 +2676,14 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         switch (zone) {
             case Z_SHELF:
                 if (dy >= 0 || shelf.isEmpty()) return false;
-                if (cinema()) {
+                if (tab == T_MARKET) {
+                    zone = Z_MARKET;
+                    marketIndex = 4 + marketIndex % 4;
+                    heroDirty = true;
+                } else if (tab == T_SEARCH && !cinema()) {
+                    zone = Z_SEARCH;
+                    heroDirty = true;
+                } else if (cinema()) {
                     zone = Z_CINEMA;
                     heroDirty = true;
                 } else if (cards.isEmpty()) {
@@ -2489,12 +2709,19 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 break;
             case Z_TOP:
                 if (dx != 0) {
-                    int next = Math.max(0, Math.min(5, topIndex + dx));
+                    int next = Math.max(0, Math.min(NT + 2, topIndex + dx));
                     if (next == topIndex) return true;
                     topIndex = next;
-                    if (topIndex < 3) selectTab(topIndex);   // like Apple TV tabs: focusing a tab selects it
+                    if (topIndex < NT) selectTab(topIndex);   // like Apple TV tabs: focusing a tab selects it
                 } else if (dy > 0) {
-                    if (cinema()) {
+                    if (tab == T_MARKET) {
+                        zone = Z_MARKET;
+                        marketIndex = marketIndex % 4;
+                        heroDirty = true;
+                    } else if (tab == T_SEARCH) {
+                        zone = Z_SEARCH;
+                        heroDirty = true;
+                    } else if (cinema()) {
                         zone = Z_CINEMA;
                         heroDirty = true;
                     } else if (cards.isEmpty()) {
@@ -2525,6 +2752,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 } else if (cinemaRow > 0) {
                     cinemaRow--;
                     cinemaCol = cinemaFirst = 0;
+                } else if (tab == T_SEARCH) {
+                    zone = Z_SEARCH;
                 } else {
                     zone = Z_TOP;
                     topIndex = tab;
@@ -2532,6 +2761,40 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 heroDirty = true;
                 break;
             }
+            case Z_MARKET: {
+                int row = marketIndex / 4, col = marketIndex % 4;
+                if (dx != 0) {
+                    int next = Math.max(0, Math.min(3, col + dx));
+                    if (next == col) return true;
+                    marketIndex = row * 4 + next;
+                } else if (dy < 0) {
+                    if (row == 0) {
+                        zone = Z_TOP;
+                        topIndex = tab;
+                    } else {
+                        marketIndex = col;
+                    }
+                } else if (row == 1) {
+                    zone = Z_SHELF;
+                } else {
+                    marketIndex = 4 + col;
+                }
+                heroDirty = true;
+                break;
+            }
+            case Z_SEARCH:
+                if (dx != 0) return true;
+                if (dy < 0) {
+                    zone = Z_TOP;
+                    topIndex = tab;
+                } else if (cinema()) {
+                    zone = Z_CINEMA;
+                    cinemaRow = cinemaCol = cinemaFirst = 0;
+                } else {
+                    zone = Z_SHELF;
+                }
+                heroDirty = true;
+                break;
             default:
                 return false;
         }

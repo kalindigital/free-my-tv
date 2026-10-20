@@ -8,3 +8,7 @@
 - [x] Integração do Cinemora no Free My TV (ver abaixo).
 - [x] Free My TV: abas Filmes e Séries com as fileiras do Cinemora (mesmas categorias e capas); OK abre o título no detalhe do Cinemora (`Cinemora.java`, PR #4).
 - [x] Proteção: Início se declara opaco a cada retorno (o sistema o deixou "transparente" duas vezes na TCL carregada).
+- [x] Saudação no Início ("Bom dia/Boa tarde/Boa noite, Guilherme"), com `name=` no `config.properties`.
+- [x] Aba Mercado: Ibovespa, Dólar, Euro, Bitcoin, Ethereum, Nasdaq, S&P 500 e Dow Jones com variação e minigráfico; OK abre o gráfico grande (1D a 5A).
+- [x] Aba Buscar: busca no catálogo do Cinemora pelo teclado da TV (com voz), resultados em fileiras, OK abre no Cinemora.
+- [x] Voltar de um gráfico, do Cinemora ou de um app retorna ao mesmo ponto do Início (a TV está com "Não manter atividades" ligado).

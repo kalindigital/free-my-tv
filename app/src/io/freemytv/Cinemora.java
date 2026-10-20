@@ -63,6 +63,9 @@ final class Cinemora {
     private final Set<String> missing = Collections.synchronizedSet(new HashSet<>());
     private final List<Listener> listeners = new ArrayList<>();
     private volatile List<Row> movies = Collections.emptyList(), series = Collections.emptyList();
+    private volatile List<Row> found = Collections.emptyList();
+    private volatile String foundFor = "";
+    private int searches;
     private volatile long fetchedAt;
     private volatile boolean fetching;
     private int coverW = 220, coverH = 330;
@@ -83,6 +86,51 @@ final class Cinemora {
     /** The rows for a tab ("movie" or "tv"); empty when Cinemora isn't installed, signed out or has no catalog yet. */
     List<Row> rows(String tabKind) {
         return "movie".equals(tabKind) ? movies : "tv".equals(tabKind) ? series : Collections.<Row>emptyList();
+    }
+
+    /** Whether Cinemora gave us a catalog (installed, signed in, our permission granted). */
+    boolean available() {
+        return !movies.isEmpty() || !series.isEmpty();
+    }
+
+    /** The results of the last search ("Filmes" and "Séries" rows, those that have any) and what they are for. */
+    List<Row> found() { return found; }
+    String foundFor() { return foundFor; }
+
+    /** Searches Cinemora's catalog in the background; the listeners hear when the results are in. */
+    void search(final String query) {
+        final String q = query.trim();
+        final int id = ++searches;
+        if (q.isEmpty()) {
+            found = Collections.emptyList();
+            foundFor = "";
+            notifyListeners();
+            return;
+        }
+        rowsIo.execute(() -> {
+            List<Row> out = new ArrayList<>();
+            String[][] kinds = {{MOVIE, Ui.tr("Filmes", "Movies", "Películas")}, {SERIES, Ui.tr("Séries", "Shows", "Series")}};
+            for (String[] kind : kinds) {
+                Row row = new Row(kind[1]);
+                try (Cursor c = app.getContentResolver().query(BASE.buildUpon().appendPath("search").appendPath(kind[0])
+                        .appendQueryParameter("q", q).build(), null, null, null, null)) {
+                    if (c != null) {
+                        int idc = c.getColumnIndex("id"), title = c.getColumnIndex("title"), year = c.getColumnIndex("year"),
+                                rating = c.getColumnIndex("rating");
+                        while (c.moveToNext()) {
+                            row.items.add(new Item(kind[0], c.getString(idc), c.getString(title), c.getString(year), c.getString(rating)));
+                        }
+                    }
+                } catch (RuntimeException e) {
+                    AppLog.w("cinemora search: " + e.getMessage());
+                }
+                if (!row.items.isEmpty()) out.add(row);
+            }
+            if (id != searches) return;     // a newer search is on its way
+            found = out;
+            foundFor = q;
+            notifyListeners();
+        });
     }
 
     void refreshIfStale() {

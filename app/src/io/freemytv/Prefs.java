@@ -72,6 +72,8 @@ final class Prefs {
     // MARK: - City (from config.properties)
 
     static String city() { return Config.CITY.trim(); }
+    /** The name in the home screen's greeting ("Boa noite, Guilherme"). */
+    static String name() { return Config.NAME.trim(); }
     static String latitude() { return Config.LATITUDE; }
     static String longitude() { return Config.LONGITUDE; }
 
