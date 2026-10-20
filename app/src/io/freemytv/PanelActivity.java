@@ -13,7 +13,7 @@ import android.view.KeyEvent;
 import android.view.View;
 
 /**
- * The side panel of the remote's dashboard button (Wi-Fi, accessories, inputs, picture, sound, settings). The system
+ * The side panel of the remote's dashboard button (Wi-Fi, accessories, inputs, picture, settings). The system
  * opens it with TOGGLE_NOTIFICATION_HANDLER_PANEL, which Google TV's home screen answers when it's on; in Free My TV
  * mode that one is off, so this app answers instead. Pressing the button again closes it.
  */
@@ -47,8 +47,8 @@ public class PanelActivity extends Activity {
             case 1: i = new Intent().setComponent(ComponentName.unflattenFromString(TCL_ACCESSORIES)); break;
             case 2: i = new Intent("com.android.tv.action.VIEW_INPUTS"); break;
             case 3: i = new Intent(Settings.ACTION_DISPLAY_SETTINGS); break;
-            case 4: i = new Intent(Settings.ACTION_SOUND_SETTINGS); break;
-            case 5: i = new Intent(this, SettingsActivity.class); break;
+            case 4: i = new Intent(this, SettingsActivity.class); break;
+            // No sound item: on TCL the system's sound screen crashes, and the remote has the volume.
             default: i = new Intent(Settings.ACTION_SETTINGS);
         }
         i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
@@ -65,7 +65,7 @@ public class PanelActivity extends Activity {
     static final class PanelView extends View {
         private static final float WIDTH = 600, ROW = 88, TOP = 250;
         private static final int INK = 0xFF1C1C1E;
-        private static final String[] SYMBOLS = {"wifi", "bluetooth", "hdmi", "tv_settings", "speaker", "sparkles", "settings"};
+        private static final String[] SYMBOLS = {"wifi", "bluetooth", "hdmi", "tv_settings", "sparkles", "settings"};
 
         private final PanelActivity activity;
         private final RectF rect = new RectF();
@@ -90,7 +90,6 @@ public class PanelActivity extends Activity {
                 Ui.tr("Controles e Bluetooth", "Remotes & Bluetooth", "Controles y Bluetooth"),
                 Ui.tr("Entradas", "Inputs", "Entradas"),
                 Ui.tr("Imagem", "Picture", "Imagen"),
-                Ui.tr("Som", "Sound", "Sonido"),
                 "Free My TV",
                 Ui.tr("Configurações", "Settings", "Ajustes"),
             };
