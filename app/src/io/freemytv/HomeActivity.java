@@ -48,6 +48,9 @@ public class HomeActivity extends Activity {
             recreate();   // a new language or city: draw everything again
             return;
         }
+        // Seen twice on a loaded TCL (Android 11): the system left the home screen marked translucent, so the app
+        // behind it showed through while the remote went to the invisible home screen. Opaque again on every resume.
+        if (android.os.Build.VERSION.SDK_INT >= 30) setTranslucent(false);
         if (home != null) home.resume();
     }
 

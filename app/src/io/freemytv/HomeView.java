@@ -56,7 +56,8 @@ import java.util.function.Consumer;
  * Measurements are in a 1920×1080 space (k = width / 1920). The screen is split into layers so the TV's weak GPU only
  * redraws what changed.
  */
-final class HomeView extends ViewGroup implements Choreographer.FrameCallback, HomeData.Listener, Recs.Listener {
+final class HomeView extends ViewGroup implements Choreographer.FrameCallback, HomeData.Listener, Recs.Listener,
+        Cinemora.Listener {
     // tvOS grid (Human Interface Guidelines): content inside the safe area, 80 px from the sides and 60 from top and
     // bottom; 40 px between items; 7 columns of 217 px (the apps). The shelf glass extends 36 px past the tiles (the
     // same padding on all four sides) and the tile corners are concentric with it (glass radius = radius + padding).
@@ -96,12 +97,16 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private static final String[] TABS_EN = {"Explore", "Movies", "Shows"};
     private static final String[] TABS_ES = {"Explorar", "Películas", "Series"};
     private static final String[] TAB_KIND = {null, "movie", "tv"};
-    private static final int Z_TOP = 4, Z_CARDS = 5;
+    private static final int Z_TOP = 4, Z_CARDS = 5, Z_CINEMA = 6;
+    // Movies and Shows with Cinemora: one category row of 2:3 posters at a time (▲▼ change the category).
+    private static final float C_ROW_TITLE = 300, C_TOP = 330, C_W = 220, C_H = 330, C_GAP = 30;
 
     private final Activity activity;
     private final Scene scene = new Scene();
     private final HomeData data;
     private final Recs recs;
+    private final Cinemora cinemora;
+    private int cinemaRow, cinemaCol, cinemaFirst;
     private final Click click;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final SharedPreferences ui;
@@ -289,6 +294,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             if (!running) return;
             data.refreshIfStale();
             recs.refreshIfStale();
+            cinemora.refreshIfStale();
             checkNotices();
             updatePalette();
             checkNight(true);
@@ -302,6 +308,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         activity = a;
         data = HomeData.get(a);
         recs = Recs.get(a);
+        cinemora = Cinemora.get(a);
         click = new Click(a);
         ui = a.getSharedPreferences("home-ui", Context.MODE_PRIVATE);
         tvInputs = (TvInputManager) a.getSystemService(Context.TV_INPUT_SERVICE);
@@ -356,8 +363,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         lastStep = 0;
         data.addListener(this);
         recs.addListener(this);
+        cinemora.addListener(this);
         data.refreshIfStale();
         recs.refreshIfStale();
+        cinemora.refreshIfStale();
         if (tvInputs != null) tvInputs.registerCallback(inputCallback, handler);
         handler.postDelayed(tick, 15_000);
         checkNotices();
@@ -379,6 +388,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         handler.removeCallbacks(tick);
         data.removeListener(this);
         recs.removeListener(this);
+        cinemora.removeListener(this);
         if (tvInputs != null) tvInputs.unregisterCallback(inputCallback);
     }
 
@@ -431,6 +441,20 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     @Override public void onRecs() {
         updatePicks();
+    }
+
+    @Override public void onCinemora() {
+        if (tab > 0) updateCards();
+        heroDirty = true;
+    }
+
+    /** Cinemora's rows for the selected tab (Movies or Shows); empty: the tab shows the TMDB picks as before. */
+    private List<Cinemora.Row> cinemaRows() {
+        return tab > 0 ? cinemora.rows(TAB_KIND[tab]) : java.util.Collections.<Cinemora.Row>emptyList();
+    }
+
+    private boolean cinema() {
+        return !cinemaRows().isEmpty();
     }
 
     private void invalidateAll() {
@@ -1813,6 +1837,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             closeDrawer();
             retarget(false);
         } else if (zone != Z_SHELF) {
+            if (zone == Z_CINEMA) heroDirty = true;
             zone = Z_SHELF;
             retarget(false);
         } else {
@@ -1950,6 +1975,13 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             }
             it = lightButtons.get(topIndex - 3);
             r = topRects[topIndex];
+        } else if (zone == Z_CINEMA) {
+            List<Cinemora.Row> rows = cinemaRows();
+            if (cinemaRow >= rows.size() || cinemaCol >= rows.get(cinemaRow).items.size()) return;
+            Cinemora.Item item = rows.get(cinemaRow).items.get(cinemaCol);
+            click.open();
+            if (!Cinemora.open(activity, item)) showToast(Ui.tr("Não deu para abrir o Cinemora.", "Couldn't open Cinemora."));
+            return;
         } else if (zone == Z_CARDS) {
             Recs.Pick p = cardIndex < cards.size() ? cards.get(cardIndex) : null;
             if (p == null || p.pkg == null) return;
@@ -2157,12 +2189,17 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         cardRects[0].set(left, top, left + wide, top + ch);
         cardRects[1].set(cardRects[0].right + g, top, cardRects[0].right + g + tall, top + ch);
         cardRects[2].set(cardRects[1].right + g, top, cardRects[1].right + g + tall, top + ch);
+        cinemora.setCoverSize(Math.round(C_W * k * 1.06f), Math.round(C_H * k * 1.06f));
         heroDirty = statusDirty = true;
     }
 
     /** The three cards of the current tab (Explore, Movies, Shows) and the background taken from the first one. */
     private void updateCards() {
-        List<Recs.Pick> list = recs.now(TAB_KIND[tab]);
+        List<Recs.Pick> list = cinema() ? new ArrayList<>() : recs.now(TAB_KIND[tab]);
+        if (zone == Z_CINEMA && !cinema()) {
+            zone = Z_SHELF;
+            retarget(false);
+        }
         if (!samePicks(list, cards)) {
             cards = list;
             cardIndex = Math.min(cardIndex, Math.max(0, list.size() - 1));
@@ -2181,6 +2218,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private void selectTab(int index) {
         if (index == tab) return;
         tab = index;
+        cinemaRow = cinemaCol = cinemaFirst = 0;
         updateCards();
         heroDirty = true;
     }
@@ -2251,10 +2289,14 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             if (i == tab) lTabOn.setColor(blend(tone(L_INK, WHITE), L_INK, focus));   // always dark on the white pill
             c.drawText(tabs()[i], r.centerX() - p.measureText(tabs()[i]) / 2, r.centerY() + Ui.halfCap(p), p);
         }
-        int top = -1;
-        for (int i = 0; i < 3; i++) if (cardFocus[i].value > 0.02f && (top < 0 || cardFocus[i].value > cardFocus[top].value)) top = i;
-        for (int i = 0; i < 3; i++) if (i != top) drawLightCard(c, i);
-        if (top >= 0) drawLightCard(c, top);
+        if (cinema()) {
+            drawCinema(c);
+        } else {
+            int top = -1;
+            for (int i = 0; i < 3; i++) if (cardFocus[i].value > 0.02f && (top < 0 || cardFocus[i].value > cardFocus[top].value)) top = i;
+            for (int i = 0; i < 3; i++) if (i != top) drawLightCard(c, i);
+            if (top >= 0) drawLightCard(c, top);
+        }
         if (HomeData.coinCount() > 0) drawQuotes(c);
     }
 
@@ -2307,6 +2349,83 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
     }
 
+    private int cinemaVisible() {
+        return (int) ((CONTENT_R - MARGIN + C_GAP) / (C_W + C_GAP));
+    }
+
+    /**
+     * Movies and Shows from Cinemora: the category's name, a row of posters (the focused one grows and lights its
+     * border, like the cards) and, under it, the focused title with its year and rating. ▲▼ go through the categories
+     * in Cinemora's order; the next one's name shows on the right (Inter has no ▾).
+     */
+    private void drawCinema(Canvas c) {
+        List<Cinemora.Row> rows = cinemaRows();
+        cinemaRow = Math.min(cinemaRow, rows.size() - 1);
+        Cinemora.Row row = rows.get(cinemaRow);
+        cinemaCol = Math.min(cinemaCol, row.items.size() - 1);
+        int visible = cinemaVisible();
+        if (cinemaCol < cinemaFirst) cinemaFirst = cinemaCol;
+        if (cinemaCol >= cinemaFirst + visible) cinemaFirst = cinemaCol - visible + 1;
+        cinemaFirst = Math.max(0, Math.min(cinemaFirst, Math.max(0, row.items.size() - visible)));
+        boolean focusedRow = zone == Z_CINEMA && !sheetOpen;
+        float left = MARGIN * k, top = C_TOP * k, cw = C_W * k, ch = C_H * k, gap = C_GAP * k, r0 = 16 * k;
+
+        c.drawText(row.title, left, C_ROW_TITLE * k, lCardTitle);
+        String where = (cinemaRow + 1) + " / " + rows.size()
+                + (cinemaRow + 1 < rows.size() ? Ui.tr("   ·   A seguir: ", "   ·   Next: ", "   ·   Siguiente: ")
+                + rows.get(cinemaRow + 1).title : "");
+        c.drawText(where, CONTENT_R * k - lCardMeta.measureText(where), C_ROW_TITLE * k, lCardMeta);
+
+        int focused = focusedRow ? cinemaCol : -1;
+        for (int pass = 0; pass < 2; pass++) {      // the focused poster last, over its neighbours
+            for (int i = cinemaFirst; i < Math.min(row.items.size(), cinemaFirst + visible); i++) {
+                if ((i == focused) != (pass == 1)) continue;
+                Cinemora.Item it = row.items.get(i);
+                float f = i == focused ? 1 : 0, s = 1 + 0.06f * f;
+                float cx = left + (i - cinemaFirst) * (cw + gap) + cw / 2, cy = top + ch / 2 - 6 * k * f;
+                cell.set(cx - cw * s / 2, cy - ch * s / 2, cx + cw * s / 2, cy + ch * s / 2);
+                float r = r0 * s;
+                tmp.set(cell);
+                tmp.offset(0, (10 + 14 * f) * k);
+                shadowDeep.setColor(Ui.alpha(0xFF000000, tone(0.14f, 0.32f) + tone(0.2f, 0.28f) * f));
+                shadows.draw(c, tmp, r, DEEP_BLUR * k, shadowDeep);
+                Bitmap img = cinemora.cover(it);
+                if (img != null) {
+                    roundImage(c, img, cell, r);
+                } else {
+                    fill.setShader(null);
+                    fill.setColor(tone(0xFFDADADF, 0xFF2C2C2E));
+                    c.drawRoundRect(cell, r, r, fill);
+                    TextPaint tp = new TextPaint(lCardMeta);
+                    StaticLayout name = new StaticLayout(it.title, tp, Math.round(cell.width() - 24 * k),
+                            Layout.Alignment.ALIGN_CENTER, 1.05f, 0, false);
+                    c.save();
+                    c.translate(cell.left + 12 * k, cell.centerY() - name.getHeight() / 2f);
+                    name.draw(c);
+                    c.restore();
+                }
+                if (f > 0) {
+                    rim.setShader(new LinearGradient(0, cell.top, 0, cell.bottom,
+                            Ui.alpha(0xFFFFFFFF, 0.9f), Ui.alpha(0xFFFFFFFF, 0.35f), Shader.TileMode.CLAMP));
+                    c.drawRoundRect(cell, r, r, rim);
+                }
+            }
+        }
+        if (focused >= 0) {
+            Cinemora.Item it = row.items.get(focused);
+            float base = top + ch + 62 * k;
+            c.drawText(TextUtils.ellipsize(it.title, new TextPaint(lCardTitle), (CONTENT_R - MARGIN) * k,
+                    TextUtils.TruncateAt.END).toString(), left, base, lCardTitle);
+            StringBuilder meta = new StringBuilder();
+            if (it.year != null && !it.year.isEmpty()) meta.append(it.year);
+            if (it.rating != null && !it.rating.isEmpty() && !it.rating.equals("0")) {
+                meta.append(meta.length() > 0 ? "  ·  " : "").append("★ ").append(it.rating);
+            }
+            meta.append(meta.length() > 0 ? "  ·  " : "").append("Cinemora");
+            c.drawText(meta.toString(), left, base + 36 * k, lCardMeta);
+        }
+    }
+
     /**
      * Live TV, HDMI Inputs and Settings: icon-only glass circles (light by day, smoked at night); the focused one turns
      * white with a dark icon (the tvOS focus) and its name appears below it.
@@ -2344,7 +2463,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         switch (zone) {
             case Z_SHELF:
                 if (dy >= 0 || shelf.isEmpty()) return false;
-                if (cards.isEmpty()) {
+                if (cinema()) {
+                    zone = Z_CINEMA;
+                    heroDirty = true;
+                } else if (cards.isEmpty()) {
                     zone = Z_TOP;
                     topIndex = tab;
                 } else {
@@ -2372,7 +2494,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                     topIndex = next;
                     if (topIndex < 3) selectTab(topIndex);   // like Apple TV tabs: focusing a tab selects it
                 } else if (dy > 0) {
-                    if (cards.isEmpty()) {
+                    if (cinema()) {
+                        zone = Z_CINEMA;
+                        heroDirty = true;
+                    } else if (cards.isEmpty()) {
                         zone = Z_SHELF;
                     } else {
                         zone = Z_CARDS;
@@ -2382,6 +2507,31 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                     return true;
                 }
                 break;
+            case Z_CINEMA: {
+                List<Cinemora.Row> rows = cinemaRows();
+                if (rows.isEmpty()) return false;
+                if (dx != 0) {
+                    int n = rows.get(Math.min(cinemaRow, rows.size() - 1)).items.size();
+                    int next = Math.max(0, Math.min(n - 1, cinemaCol + dx));
+                    if (next == cinemaCol) return true;
+                    cinemaCol = next;
+                } else if (dy > 0) {
+                    if (cinemaRow + 1 < rows.size()) {
+                        cinemaRow++;
+                        cinemaCol = cinemaFirst = 0;
+                    } else {
+                        zone = Z_SHELF;
+                    }
+                } else if (cinemaRow > 0) {
+                    cinemaRow--;
+                    cinemaCol = cinemaFirst = 0;
+                } else {
+                    zone = Z_TOP;
+                    topIndex = tab;
+                }
+                heroDirty = true;
+                break;
+            }
             default:
                 return false;
         }
