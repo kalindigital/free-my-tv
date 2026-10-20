@@ -16,8 +16,8 @@ final class Rss {
     private Rss() {}
 
     static final class Headline {
-        final String title, source;
-        Headline(String title, String source) { this.title = title; this.source = source; }
+        final String title, source, link;
+        Headline(String title, String source, String link) { this.title = title; this.source = source; this.link = link; }
     }
 
     static List<Headline> parse(String xml, int max) throws Exception {
@@ -41,7 +41,7 @@ final class Rss {
                 if (source.isEmpty()) source = title.substring(dash + 3).trim();
                 if (title.substring(dash + 3).trim().equals(source)) title = title.substring(0, dash).trim();
             }
-            out.add(new Headline(title, source));
+            out.add(new Headline(title, source, text(item, "link")));
         }
         return out;
     }
