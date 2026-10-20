@@ -5,4 +5,6 @@
 - [x] Teste do parser de RSS (`tests/run.sh`).
 - [x] Painel próprio para o botão de menu do controle (`PanelActivity`): Wi-Fi, controles e Bluetooth, entradas, imagem, Free My TV e configurações (PR #2).
 - [x] Ler notícias no protetor de tela: ▲▼ escolhem a manchete, OK abre a matéria com texto e fotos (`Reader` + `ArticleView`), ▲▼/◀▶ rolam, Voltar retorna (PR #3).
-- [ ] Integração do Cinemora no Free My TV.
+- [x] Integração do Cinemora no Free My TV (ver abaixo).
+- [x] Free My TV: abas Filmes e Séries com as fileiras do Cinemora (mesmas categorias e capas); OK abre o título no detalhe do Cinemora (`Cinemora.java`, PR #4).
+- [x] Proteção: Início se declara opaco a cada retorno (o sistema o deixou "transparente" duas vezes na TCL carregada).

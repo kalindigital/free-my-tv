@@ -42,7 +42,7 @@ import java.util.Set;
  */
 public class SettingsActivity extends Activity {
     private SettingsView view;
-    private DreamView preview;   // "Screensaver": the screensaver right here, without changing the system setting
+    private DreamBoard preview;   // "Screensaver": the screensaver right here, without changing the system setting
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -76,27 +76,20 @@ public class SettingsActivity extends Activity {
 
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
         if (preview != null) {
-            // Like the real screensaver: arrows, OK or Back close it (other keys go on to the system).
-            switch (event.getKeyCode()) {
-                case KeyEvent.KEYCODE_DPAD_UP:
-                case KeyEvent.KEYCODE_DPAD_DOWN:
-                case KeyEvent.KEYCODE_DPAD_LEFT:
-                case KeyEvent.KEYCODE_DPAD_RIGHT:
-                case KeyEvent.KEYCODE_DPAD_CENTER:
-                case KeyEvent.KEYCODE_ENTER:
-                case KeyEvent.KEYCODE_BACK:
-                    if (event.getAction() == KeyEvent.ACTION_UP) closePreview();
-                    return true;
-                default:
-                    return super.dispatchKeyEvent(event);
+            // Like the real screensaver: the arrows and OK read the news; Back (and other keys) close it.
+            int r = preview.key(event);
+            if (r == InfoView.EXIT) {
+                if (event.getAction() == KeyEvent.ACTION_UP) closePreview();
+                return true;
             }
+            return r == InfoView.HANDLED || super.dispatchKeyEvent(event);
         }
         if (view.onKey(event)) return true;
         return super.dispatchKeyEvent(event);
     }
 
     void showPreview() {
-        preview = new DreamView(this);
+        preview = new DreamBoard(this);
         setContentView(preview);
         preview.start();
     }
