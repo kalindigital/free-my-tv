@@ -9,4 +9,12 @@
         <item name="android:windowShowWallpaper">false</item>
         <item name="android:colorBackgroundCacheHint">@null</item>
     </style>
+
+    <!-- The side panel: over whatever is on screen. -->
+    <style name="FreeMyTV.Panel" parent="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowContentOverlay">@null</item>
+        <item name="android:backgroundDimEnabled">false</item>
+    </style>
 </resources>

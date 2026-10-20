@@ -91,6 +91,26 @@
             </intent-filter>
         </activity>
 
+        <!-- The remote's dashboard button (Wi-Fi, inputs, settings): Google TV's home screen answers it, and it is off in
+             Free My TV mode. -->
+        <activity
+            android:name=".PanelActivity"
+            android:process=":home"
+            android:exported="true"
+            android:label="Free My TV"
+            android:launchMode="singleTask"
+            android:taskAffinity="io.freemytv.panel"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:screenOrientation="landscape"
+            android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|smallestScreenSize|uiMode|density|fontScale|locale|layoutDirection"
+            android:theme="@style/FreeMyTV.Panel">
+            <intent-filter>
+                <action android:name="android.app.action.TOGGLE_NOTIFICATION_HANDLER_PANEL" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
         <service
             android:name=".Screensaver"
             android:process=":home"
