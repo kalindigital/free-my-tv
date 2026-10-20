@@ -11,9 +11,14 @@ import android.view.KeyEvent;
  * Channel); with it off, the keys still arrive, so we open the app the person picked (Settings > Remote Buttons).
  * Disney and Globoplay are opened by the system itself, so they are not listed. The YouTube button (BUTTON_3) never
  * reaches an app's window; only the accessibility service's key filter (RemoteKeyService) sees it.
+ * The dashboard button (the gear) asks the system UI for TOGGLE_NOTIFICATION_HANDLER_PANEL, which it only sends to
+ * system apps (Google TV's home screen, off in Free My TV mode): we open our own panel (PanelActivity) instead.
  */
 final class RemoteKeys {
     private RemoteKeys() {}
+
+    /** TCL's dashboard (gear) button. */
+    static final int DASHBOARD = 4077;
 
     /** The key codes are TCL's: on other brands they can be other buttons, so nothing here runs there. */
     static boolean supported() {
@@ -27,6 +32,13 @@ final class RemoteKeys {
         int source = e.getSource();
         if ((source & InputDevice.SOURCE_GAMEPAD) == InputDevice.SOURCE_GAMEPAD
                 || (source & InputDevice.SOURCE_JOYSTICK) == InputDevice.SOURCE_JOYSTICK) return false;
+        if (e.getKeyCode() == DASHBOARD) {
+            // Pressed again with the panel open: PanelActivity closes itself (onNewIntent).
+            if (e.getAction() == KeyEvent.ACTION_DOWN && e.getRepeatCount() == 0) {
+                c.startActivity(new Intent(c, PanelActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            }
+            return true;
+        }
         boolean ours = false;
         for (int key : Prefs.KEYS) ours |= key == e.getKeyCode();
         if (!ours) return false;
