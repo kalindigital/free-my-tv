@@ -55,6 +55,8 @@ final class Config {
     static final String LONGITUDE = "$LON";
     static final String CITY = "$(prop city '')";
     static final String NAME = "$(prop name '')";
+    static final String ESTHETIS_API = "$(prop esthetis_api '')";
+    static final String ESTHETIS_TV_TOKEN = "$(prop esthetis_tv_token '')";
     static final String LANGUAGE = "$(prop language auto)";
     static final String CURRENCY = "$(prop currency USD)";
     static final String TEMPERATURE = "$(prop temperature auto)";
