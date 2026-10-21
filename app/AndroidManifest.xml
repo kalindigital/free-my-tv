@@ -114,6 +114,17 @@
             </intent-filter>
         </activity>
 
+        <!-- The Weather screen (OK on Home's weather card). -->
+        <activity
+            android:name=".WeatherActivity"
+            android:process=":home"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:screenOrientation="landscape"
+            android:windowSoftInputMode="adjustNothing"
+            android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|smallestScreenSize|uiMode|density|fontScale|locale|layoutDirection"
+            android:theme="@style/FreeMyTV.Home" />
+
         <!-- An Esthetis tab card, full screen. -->
         <activity
             android:name=".ChartActivity"

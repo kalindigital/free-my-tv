@@ -2149,8 +2149,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             if (!Cinemora.open(activity, item)) showToast(Ui.tr("Não deu para abrir o Cinemora.", "Couldn't open Cinemora."));
             return;
         } else if (zone == Z_CARDS && tab == 0) {
-            // Home: the prices open Markets, Esthetis its tab; the weather only shows.
-            if (cardIndex == 1) {
+            // Home: the weather opens the Weather screen, the prices Markets, Esthetis its tab.
+            if (cardIndex == 0) {
+                click.open();
+                activity.startActivity(new android.content.Intent(activity, WeatherActivity.class));
+                return;
+            } else if (cardIndex == 1) {
                 selectTab(T_MARKET);
                 zone = Z_MARKET;
                 marketIndex = 0;

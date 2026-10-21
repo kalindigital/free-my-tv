@@ -16,3 +16,4 @@
 - [x] Aba Esthetis: MRR, assinaturas, novos usuários, visitantes (GA4), cliques e impressões (Search Console), com gráfico em tela cheia (api-esthetis#326).
 - [x] Home (antes "Explorar"): Tempo, Cotações e Esthetis no lugar das sugestões, sem os títulos de baixo; gaveta só com entradas e atalhos.
 - [x] Apps só na Home; Filmes e Séries com duas fileiras do catálogo por vez, tela inteira.
+- [x] Tela Tempo (OK no cartão de tempo): previsão completa estilo iPhone, mapas de chuva (radar animado), temperatura e vento, e cidades com busca (PLANO-TEMPO.md).
