@@ -111,6 +111,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private static final int Z_TOP = 4, Z_CARDS = 5, Z_CINEMA = 6, Z_MARKET = 7, Z_SEARCH = 8, Z_BOARD = 9;
     // Markets: 4 × 2 cards; Search: the field, then the results as Cinemora rows (a little smaller).
     private static final float M_TOP = 262, M_H = 240, M_GAP = 30, S_H = 68, S_W = 900, S_DY = 90, S_SCALE = 0.8f;
+    /** Without the apps (every tab but Home), the grids go down to here. */
+    private static final float GRID_BOTTOM = 1020;
     // Movies and Shows with Cinemora: one category row of 2:3 posters at a time (▲▼ change the category).
     private static final float C_ROW_TITLE = 300, C_TOP = 330, C_W = 220, C_H = 330, C_GAP = 30;
 
@@ -559,11 +561,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     /** The apps (and the drawer under them) are only on Home; the other tabs take the whole screen. */
     private void updateShelf() {
-        int v = tab == 0 ? VISIBLE : INVISIBLE;
-        if (platter.getVisibility() != v) {
-            platter.setVisibility(v);
-            tiles.setVisibility(v);
-        }
+        motionDirty = true;     // updateMotion shows or hides the apps
         if (tab != 0 && zone == Z_SHELF) {
             zone = Z_TOP;
             topIndex = tab;
@@ -802,8 +800,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         float lift = -d * shift;
         show(heroLayer, top, lift);
         show(status, top, lift);
-        show(platter, home, lift);
-        show(tiles, home, lift);
+        // The apps only on Home (this runs on every frame of the drawer and after a recreated screen).
+        float apps = tab == 0 ? home : 0;
+        show(platter, apps, lift);
+        show(tiles, apps, lift);
         float da = home * smoothstep(0.1f, 0.6f, dc);
         drawerLayer.setTranslationY((1 - d) * shift);
         drawerLayer.setAlpha(da);
@@ -2889,8 +2889,13 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     /** The Markets card i (4 columns, 2 rows). */
+    /** The height of a Markets or Esthetis card: two rows filling the screen down to GRID_BOTTOM. */
+    private float gridCardH() {
+        return (GRID_BOTTOM - M_TOP - M_GAP) / 2 * k;
+    }
+
     private void marketRect(int i, RectF out) {
-        float gap = M_GAP * k, cw = ((CONTENT_R - MARGIN) * k - 3 * gap) / 4, ch = M_H * k;
+        float gap = M_GAP * k, cw = ((CONTENT_R - MARGIN) * k - 3 * gap) / 4, ch = gridCardH();
         float x = MARGIN * k + (i % 4) * (cw + gap), y = M_TOP * k + (i / 4) * (ch + gap);
         out.set(x, y, x + cw, y + ch);
     }
@@ -2949,7 +2954,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     /** The Esthetis card i (3 columns, 2 rows). */
     private void boardRect(int i, RectF out) {
-        float gap = M_GAP * k, cw = ((CONTENT_R - MARGIN) * k - 2 * gap) / 3, ch = M_H * k;
+        float gap = M_GAP * k, cw = ((CONTENT_R - MARGIN) * k - 2 * gap) / 3, ch = gridCardH();
         float x = MARGIN * k + (i % 3) * (cw + gap), y = M_TOP * k + (i / 3) * (ch + gap);
         out.set(x, y, x + cw, y + ch);
     }
