@@ -112,6 +112,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private final Cinemora cinemora;
     private int cinemaRow, cinemaCol, cinemaFirst;
     private final Market market = Market.get();
+    private final EsthetisMrr esthetis = EsthetisMrr.get();
+    private final Runnable onMrr = () -> { if (this.tab == 0) this.heroDirty = true; };
+    private static final int MRR_COLOR = 0xFFB07CFF;
     private final Runnable onMarket = () -> { if (this.tab == T_MARKET) this.heroDirty = true; };
     private int marketIndex;
     private String searchQuery = "", greetingShown = "";
@@ -316,6 +319,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             recs.refreshIfStale();
             cinemora.refreshIfStale();
             if (tab == T_MARKET) market.refreshIfStale();
+            esthetis.refreshIfStale();
             if (!greeting().equals(greetingShown)) heroDirty = true;   // morning, afternoon, evening
             checkNotices();
             updatePalette();
@@ -389,6 +393,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         cinemora.addListener(this);
         market.addListener(onMarket);
         if (tab == T_MARKET) market.refreshIfStale();
+        esthetis.addListener(onMrr);
+        esthetis.refreshIfStale();
         data.refreshIfStale();
         recs.refreshIfStale();
         cinemora.refreshIfStale();
@@ -415,6 +421,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         recs.removeListener(this);
         cinemora.removeListener(this);
         market.removeListener(onMarket);
+        esthetis.removeListener(onMrr);
         handler.removeCallbacks(runSearch);
         if (tvInputs != null) tvInputs.unregisterCallback(inputCallback);
     }
@@ -2094,6 +2101,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             click.open();
             if (!Cinemora.open(activity, item)) showToast(Ui.tr("Não deu para abrir o Cinemora.", "Couldn't open Cinemora."));
             return;
+        } else if (zone == Z_CARDS && cardIndex == 2 && mrrCard()) {
+            return;     // the revenue card only shows numbers
         } else if (zone == Z_CARDS) {
             Recs.Pick p = cardIndex < cards.size() ? cards.get(cardIndex) : null;
             if (p == null || p.pkg == null) return;
@@ -2423,7 +2432,83 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
      * a soft shadow; when focused, it grows 5%, rises and lights up its border. Below it, the title (and on the large
      * card, genre · runtime · service).
      */
+    /** On Explore, with esthetis_tv_token set, the third card is Esthetis's recurring revenue instead of a pick. */
+    private boolean mrrCard() {
+        return tab == 0 && EsthetisMrr.enabled();
+    }
+
+    /**
+     * Esthetis's MRR: the value now, the change against last month and the last 12 months as bars (this month's in
+     * color). Same size, focus and shadow as the recommendation card it replaces.
+     */
+    private void drawMrrCard(Canvas c) {
+        RectF base = cardRects[2];
+        float v = cardFocus[2].value, f = Ui.clamp(v), s = 1 + 0.05f * v;
+        float bw = base.width(), bh = base.height(), r0 = 18 * k;
+        float cx = base.centerX(), cy = base.centerY() - 6 * k * v;
+        cell.set(cx - bw * s / 2, cy - bh * s / 2, cx + bw * s / 2, cy + bh * s / 2);
+        float r = r0 * s;
+        tmp.set(cell);
+        tmp.offset(0, (10 + 14 * f) * k);
+        shadowDeep.setColor(Ui.alpha(0xFF000000, tone(0.14f, 0.32f) + tone(0.2f, 0.28f) * f));
+        shadows.draw(c, tmp, r, DEEP_BLUR * k, shadowDeep);
+        fill.setShader(new LinearGradient(0, cell.top, 0, cell.bottom, tone(0xFFFFFFFF, 0xFF241B33), tone(0xFFF1EAFB, 0xFF15111D),
+                Shader.TileMode.CLAMP));
+        c.drawRoundRect(cell, r, r, fill);
+        fill.setShader(null);
+        if (f > 0.01f) {
+            rim.setShader(new LinearGradient(0, cell.top, 0, cell.bottom,
+                    Ui.alpha(0xFFFFFFFF, 0.9f * f), Ui.alpha(0xFFFFFFFF, 0.35f * f), Shader.TileMode.CLAMP));
+            c.drawRoundRect(cell, r, r, rim);
+        }
+        float x = cell.left + 26 * k * s, right = cell.right - 26 * k * s, top = cell.top;
+        lCardMeta.setColor(tone(0xFF7A5AA8, 0xFFB9A3DC));
+        c.drawText("ESTHETIS", x, top + 50 * k * s, lCardMeta);
+        lCardMeta.setColor(tone(L_DIM, 0xFF98989D));
+        c.drawText(Ui.tr("Receita recorrente", "Recurring revenue", "Ingreso recurrente"), x, top + 84 * k * s, lCardMeta);
+        mValue.setColor(tone(L_INK, WHITE));
+        c.drawText(EsthetisMrr.reais(esthetis.mrr), x, top + 140 * k * s, mValue);
+        double ch = esthetis.change;
+        if (!Double.isNaN(ch)) {
+            mChange.setColor(ch >= 0 ? UP_COLOR : DOWN_COLOR);
+            c.drawText(Market.percent(ch) + Ui.tr(" no mês", " this month", " en el mes"), x, top + 178 * k * s, mChange);
+        } else if (esthetis.failed) {
+            c.drawText(Ui.tr("Sem dados agora", "No data right now", "Sin datos ahora"), x, top + 178 * k * s, lCardMeta);
+        }
+        long[] hist = esthetis.history;
+        if (hist.length > 0) {
+            long max = 1;
+            for (long h : hist) max = Math.max(max, h);
+            float barsTop = top + 214 * k * s, barsBottom = cell.bottom - 60 * k * s;
+            float slot = (right - x) / hist.length, gap = Math.max(3 * k, slot * 0.28f);
+            for (int i = 0; i < hist.length; i++) {
+                float h = (barsBottom - barsTop) * hist[i] / max;
+                tmp.set(x + i * slot + gap / 2, barsBottom - Math.max(h, 3 * k), x + (i + 1) * slot - gap / 2, barsBottom);
+                fill.setColor(i == hist.length - 1 ? MRR_COLOR : Ui.alpha(MRR_COLOR, 0.38f));
+                c.drawRoundRect(tmp, 3 * k, 3 * k, fill);
+            }
+            String[] labels = esthetis.labels;
+            if (labels.length == hist.length) {
+                lCardMeta.setColor(tone(L_FAINT, 0xFF8E8E93));
+                c.drawText(labels[0], x, cell.bottom - 26 * k * s, lCardMeta);
+                String last = labels[labels.length - 1];
+                c.drawText(last, right - lCardMeta.measureText(last), cell.bottom - 26 * k * s, lCardMeta);
+                lCardMeta.setColor(tone(L_DIM, 0xFF98989D));
+            }
+        }
+        if (esthetis.paying > 0) {
+            c.drawText(esthetis.paying + Ui.tr(" assinaturas pagantes", " paying subscriptions", " suscripciones pagas"),
+                    base.left, base.bottom + 46 * k, lCardTitle);
+        } else {
+            c.drawText("Esthetis", base.left, base.bottom + 46 * k, lCardTitle);
+        }
+    }
+
     private void drawLightCard(Canvas c, int i) {
+        if (i == 2 && mrrCard()) {
+            drawMrrCard(c);
+            return;
+        }
         RectF base = cardRects[i];
         Recs.Pick p = i < cards.size() ? cards.get(i) : null;
         float v = cardFocus[i].value, f = Ui.clamp(v), s = 1 + 0.05f * v;
