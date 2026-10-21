@@ -13,3 +13,4 @@
 - [x] Aba Buscar: busca no catálogo do Cinemora pelo teclado da TV (com voz), resultados em fileiras, OK abre no Cinemora.
 - [x] Voltar de um gráfico, do Cinemora ou de um app retorna ao mesmo ponto do Início (a TV está com "Não manter atividades" ligado).
 - [x] Card de receita recorrente (MRR) do Esthetis na aba Explorar, com variação do mês e gráfico de 12 meses (api-esthetis#325).
+- [x] Aba Esthetis: MRR, assinaturas, novos usuários, visitantes (GA4), cliques e impressões (Search Console), com gráfico em tela cheia (api-esthetis#326).

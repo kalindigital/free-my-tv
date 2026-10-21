@@ -93,13 +93,21 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private static final float L_TALL_W = 320, L_CARD_GAP = 40, L_BUTTON = 68, L_BUTTON_GAP = 20, L_BUTTON_CY = 103;
     private static final float L_PLATTER_TOP = 814, L_TILE_H = 126;
     private static final int L_INK = 0xFF1D1D1F, L_DIM = 0xFF6E6E73, L_FAINT = 0xFF8E8E93;
-    private static final String[] TABS = {"Explorar", "Filmes", "Séries", "Mercado", "Buscar"};
-    private static final String[] TABS_EN = {"Explore", "Movies", "Shows", "Markets", "Search"};
-    private static final String[] TABS_ES = {"Explorar", "Películas", "Series", "Mercados", "Buscar"};
-    private static final String[] TAB_KIND = {null, "movie", "tv", null, null};
+    // The Esthetis tab only with esthetis_tv_token in config.properties.
+    private static final String[] TABS = esthetisTab(new String[] {"Explorar", "Filmes", "Séries", "Mercado", "Buscar"});
+    private static final String[] TABS_EN = esthetisTab(new String[] {"Explore", "Movies", "Shows", "Markets", "Search"});
+    private static final String[] TABS_ES = esthetisTab(new String[] {"Explorar", "Películas", "Series", "Mercados", "Buscar"});
+    private static final String[] TAB_KIND = {null, "movie", "tv", null, null, null};
     /** The tabs; at the top, the tabs come first (0 to NT - 1) and the three icon-only buttons after them. */
-    private static final int NT = TABS.length, T_MARKET = 3, T_SEARCH = 4;
-    private static final int Z_TOP = 4, Z_CARDS = 5, Z_CINEMA = 6, Z_MARKET = 7, Z_SEARCH = 8;
+    private static final int NT = TABS.length, T_MARKET = 3, T_SEARCH = 4, T_ESTHETIS = 5;
+
+    private static String[] esthetisTab(String[] tabs) {
+        if (!EsthetisMrr.enabled()) return tabs;
+        String[] out = java.util.Arrays.copyOf(tabs, tabs.length + 1);
+        out[tabs.length] = "Esthetis";
+        return out;
+    }
+    private static final int Z_TOP = 4, Z_CARDS = 5, Z_CINEMA = 6, Z_MARKET = 7, Z_SEARCH = 8, Z_BOARD = 9;
     // Markets: 4 × 2 cards; Search: the field, then the results as Cinemora rows (a little smaller).
     private static final float M_TOP = 262, M_H = 240, M_GAP = 30, S_H = 68, S_W = 900, S_DY = 90, S_SCALE = 0.8f;
     // Movies and Shows with Cinemora: one category row of 2:3 posters at a time (▲▼ change the category).
@@ -113,6 +121,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private int cinemaRow, cinemaCol, cinemaFirst;
     private final Market market = Market.get();
     private final EsthetisMrr esthetis = EsthetisMrr.get();
+    private final EsthetisBoard board = EsthetisBoard.get();
+    private final Runnable onBoard = () -> { if (this.tab == T_ESTHETIS) this.heroDirty = true; };
+    private int boardIndex;
     private final Runnable onMrr = () -> { if (this.tab == 0) this.heroDirty = true; };
     private static final int MRR_COLOR = 0xFFB07CFF;
     private final Runnable onMarket = () -> { if (this.tab == T_MARKET) this.heroDirty = true; };
@@ -320,6 +331,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             cinemora.refreshIfStale();
             if (tab == T_MARKET) market.refreshIfStale();
             esthetis.refreshIfStale();
+            board.refreshIfStale();
             if (!greeting().equals(greetingShown)) heroDirty = true;   // morning, afternoon, evening
             checkNotices();
             updatePalette();
@@ -395,6 +407,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (tab == T_MARKET) market.refreshIfStale();
         esthetis.addListener(onMrr);
         esthetis.refreshIfStale();
+        board.addListener(onBoard);
+        board.refreshIfStale();
         data.refreshIfStale();
         recs.refreshIfStale();
         cinemora.refreshIfStale();
@@ -422,6 +436,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         cinemora.removeListener(this);
         market.removeListener(onMarket);
         esthetis.removeListener(onMrr);
+        board.removeListener(onBoard);
         handler.removeCallbacks(runSearch);
         if (tvInputs != null) tvInputs.unregisterCallback(inputCallback);
     }
@@ -438,7 +453,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
      * app built it again from the start. The Home button still starts over (onNewIntent → reset).
      */
     private static final class Saved {
-        int tab, zone, shelfIndex, topIndex, cardIndex, cinemaRow, cinemaCol, cinemaFirst, marketIndex;
+        int tab, zone, shelfIndex, topIndex, cardIndex, cinemaRow, cinemaCol, cinemaFirst, marketIndex, boardIndex;
         String query = "";
         long at;
     }
@@ -456,6 +471,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         s.cinemaCol = cinemaCol;
         s.cinemaFirst = cinemaFirst;
         s.marketIndex = marketIndex;
+        s.boardIndex = boardIndex;
         s.query = searchQuery;
         s.at = SystemClock.uptimeMillis();
         saved = s;
@@ -474,6 +490,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         cinemaCol = s.cinemaCol;
         cinemaFirst = s.cinemaFirst;
         marketIndex = s.marketIndex;
+        boardIndex = s.boardIndex;
         searchQuery = s.query;
         if (!searchQuery.isEmpty()) cinemora.search(searchQuery);
         updateCards();      // a zone whose items aren't there (yet) falls back to the shelf
@@ -2090,6 +2107,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             activity.startActivity(new android.content.Intent(activity, MarketActivity.class)
                     .putExtra(MarketActivity.EXTRA_ASSET, marketIndex));
             return;
+        } else if (zone == Z_BOARD) {
+            click.open();
+            activity.startActivity(ChartActivity.intent(activity, boardIndex));
+            return;
         } else if (zone == Z_SEARCH) {
             click.open();
             if (searchInput != null) searchInput.start(searchQuery);
@@ -2414,6 +2435,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
         if (tab == T_MARKET) {
             drawMarket(c);
+        } else if (tab == T_ESTHETIS) {
+            drawBoard(c);
         } else if (tab == T_SEARCH) {
             drawSearch(c);
         } else if (cinema()) {
@@ -2689,6 +2712,92 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         lCardMeta.setColor(tone(L_DIM, 0xFF98989D));
     }
 
+    /** The Esthetis card i (3 columns, 2 rows). */
+    private void boardRect(int i, RectF out) {
+        float gap = M_GAP * k, cw = ((CONTENT_R - MARGIN) * k - 2 * gap) / 3, ch = M_H * k;
+        float x = MARGIN * k + (i % 3) * (cw + gap), y = M_TOP * k + (i / 3) * (ch + gap);
+        out.set(x, y, x + cw, y + ch);
+    }
+
+    /**
+     * Esthetis: six cards (revenue, subscriptions, new users, site visitors, Google clicks and impressions), each with
+     * its number, the change and its chart; OK opens it full screen (ChartActivity).
+     */
+    private void drawBoard(Canvas c) {
+        List<EsthetisBoard.Card> list = board.cards;
+        if (list.isEmpty()) {
+            String msg = board.failed ? Ui.tr("Não deu para carregar os dados do Esthetis agora.", "Couldn't load Esthetis's data right now.",
+                    "No se pudieron cargar los datos de Esthetis ahora.") : Ui.tr("Carregando os dados do Esthetis…", "Loading Esthetis's data…",
+                    "Cargando los datos de Esthetis…");
+            c.drawText(msg, MARGIN * k, (M_TOP + 60) * k, lCardMeta);
+            return;
+        }
+        int focused = zone == Z_BOARD && !sheetOpen ? boardIndex : -1;
+        for (int pass = 0; pass < 2; pass++) {
+            for (int i = 0; i < Math.min(6, list.size()); i++) {
+                if ((i == focused) != (pass == 1)) continue;
+                EsthetisBoard.Card card = list.get(i);
+                float f = i == focused ? 1 : 0, s = 1 + 0.03f * f;
+                boardRect(i, tmp);
+                float cx = tmp.centerX(), cy = tmp.centerY() - 4 * k * f, bw = tmp.width() * s, bh = tmp.height() * s;
+                cell.set(cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2);
+                float r = 22 * k * s;
+                tmp.set(cell);
+                tmp.offset(0, (8 + 10 * f) * k);
+                shadowDeep.setColor(Ui.alpha(0xFF000000, tone(0.1f, 0.3f) + tone(0.14f, 0.2f) * f));
+                shadows.draw(c, tmp, r, DEEP_BLUR * k, shadowDeep);
+                fill.setShader(null);
+                fill.setColor(f > 0 ? 0xFFFFFFFF : tone(0xEBFFFFFF, 0xFF1C1C1E));
+                c.drawRoundRect(cell, r, r, fill);
+                int ink = f > 0 ? L_INK : tone(L_INK, WHITE), dim = f > 0 ? L_DIM : tone(L_DIM, 0x99FFFFFF);
+                float x = cell.left + 26 * k, right = cell.right - 26 * k;
+                lCardMeta.setColor(dim);
+                c.drawText(card.title, x, cell.top + 46 * k, lCardMeta);
+                if (card.missing != null) {
+                    c.drawText(card.missing, x, cell.top + 100 * k, lCardMeta);
+                    continue;
+                }
+                mValue.setColor(ink);
+                c.drawText(card.value, x, cell.top + 100 * k, mValue);
+                float lx = x;
+                if (!Double.isNaN(card.change)) {
+                    String ch = Market.percent(card.change);
+                    mChange.setColor(card.change >= 0 ? UP_COLOR : DOWN_COLOR);
+                    c.drawText(ch, lx, cell.top + 140 * k, mChange);
+                    lx += mChange.measureText(ch) + 14 * k;
+                }
+                c.drawText(TextUtils.ellipsize(card.sub, new TextPaint(lCardMeta), right - lx, TextUtils.TruncateAt.END).toString(),
+                        lx, cell.top + 140 * k, lCardMeta);
+                double[] series = card.series;
+                if (series.length < 2) continue;
+                float st = cell.top + 162 * k, sb = cell.bottom - 20 * k;
+                double max = 0, min = card.bars ? 0 : Double.MAX_VALUE;
+                for (double v : series) { max = Math.max(max, v); if (!card.bars) min = Math.min(min, v); }
+                if (max - min < 1e-9) max = min + 1;
+                if (card.bars) {
+                    float slot = (right - x) / series.length, gap = Math.max(2 * k, slot * 0.25f);
+                    for (int j = 0; j < series.length; j++) {
+                        float bh2 = (float) ((sb - st) * (series[j] - min) / (max - min));
+                        tmp.set(x + j * slot + gap / 2, sb - Math.max(bh2, 2 * k), x + (j + 1) * slot - gap / 2, sb);
+                        fill.setColor(j == series.length - 1 ? card.color : Ui.alpha(card.color, 0.4f));
+                        c.drawRoundRect(tmp, 2 * k, 2 * k, fill);
+                    }
+                } else {
+                    spark.reset();
+                    for (int j = 0; j < series.length; j++) {
+                        float px = x + (right - x) * j / (series.length - 1f);
+                        float py = (float) (sb - (sb - st) * (series[j] - min) / (max - min));
+                        if (j == 0) spark.moveTo(px, py); else spark.lineTo(px, py);
+                    }
+                    sparkPaint.setStrokeWidth(3 * k);
+                    sparkPaint.setColor(card.color);
+                    c.drawPath(spark, sparkPaint);
+                }
+            }
+        }
+        lCardMeta.setColor(tone(L_DIM, 0xFF98989D));
+    }
+
     /** Search: the field (OK opens the TV's keyboard; the mic in it works too) and Cinemora's results under it. */
     private void drawSearch(Canvas c) {
         boolean on = zone == Z_SEARCH && !sheetOpen;
@@ -2765,6 +2874,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                     zone = Z_MARKET;
                     marketIndex = 4 + marketIndex % 4;
                     heroDirty = true;
+                } else if (tab == T_ESTHETIS && !board.cards.isEmpty()) {
+                    zone = Z_BOARD;
+                    boardIndex = 3 + boardIndex % 3;
+                    heroDirty = true;
                 } else if (tab == T_SEARCH && !cinema()) {
                     zone = Z_SEARCH;
                     heroDirty = true;
@@ -2802,6 +2915,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                     if (tab == T_MARKET) {
                         zone = Z_MARKET;
                         marketIndex = marketIndex % 4;
+                        heroDirty = true;
+                    } else if (tab == T_ESTHETIS && !board.cards.isEmpty()) {
+                        zone = Z_BOARD;
+                        boardIndex = boardIndex % 3;
                         heroDirty = true;
                     } else if (tab == T_SEARCH) {
                         zone = Z_SEARCH;
@@ -2863,6 +2980,27 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                     zone = Z_SHELF;
                 } else {
                     marketIndex = 4 + col;
+                }
+                heroDirty = true;
+                break;
+            }
+            case Z_BOARD: {
+                int row = boardIndex / 3, col = boardIndex % 3;
+                if (dx != 0) {
+                    int next = Math.max(0, Math.min(2, col + dx));
+                    if (next == col) return true;
+                    boardIndex = row * 3 + next;
+                } else if (dy < 0) {
+                    if (row == 0) {
+                        zone = Z_TOP;
+                        topIndex = tab;
+                    } else {
+                        boardIndex = col;
+                    }
+                } else if (row == 1) {
+                    zone = Z_SHELF;
+                } else {
+                    boardIndex = 3 + col;
                 }
                 heroDirty = true;
                 break;
