@@ -19,6 +19,10 @@ MAP = {
     "chevron_down": ("keyboard_arrow_down", 0), "sunrise": ("wb_twilight", 1), "sunset": ("wb_twilight", 1),
     "live_tv": ("live_tv", 1), "bitcoin": ("currency_bitcoin", 0),
     "wifi": ("wifi", 0), "bluetooth": ("bluetooth", 0), "back": ("arrow_back", 0), "news": ("newspaper", 1),
+    "water_drop": ("water_drop", 1), "air": ("air", 0), "uv": ("light_mode", 1), "gauge": ("speed", 0),
+    "visibility": ("visibility", 1), "thermostat": ("thermostat", 1), "umbrella": ("umbrella", 1),
+    "location": ("location_on", 1), "add": ("add", 0), "search": ("search", 0), "map": ("map", 1),
+    "navigation": ("navigation", 1), "calendar": ("calendar_month", 1), "schedule": ("schedule", 1),
 }
 
 
