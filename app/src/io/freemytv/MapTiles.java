@@ -27,12 +27,24 @@ final class MapTiles {
 
     interface Listener { void onTile(); }
 
+    // Two caches, so an hour of radar frames never pushes the base map out (that made the map blink while it
+    // reloaded): the map and its labels (~21 MB on screen) and the radar (~21 MB for six frames).
     private final LruCache<String, Bitmap> cache = new LruCache<String, Bitmap>(28 << 20) {
         @Override protected int sizeOf(String key, Bitmap b) { return b.getByteCount(); }
     };
+    private final LruCache<String, Bitmap> radarCache = new LruCache<String, Bitmap>(30 << 20) {
+        @Override protected int sizeOf(String key, Bitmap b) { return b.getByteCount(); }
+    };
+
+    private LruCache<String, Bitmap> cacheFor(String key) {
+        return key.startsWith("r") ? radarCache : cache;
+    }
     private final Set<String> loading = Collections.synchronizedSet(new HashSet<>());
-    private final Set<String> missing = Collections.synchronizedSet(new HashSet<>());
-    private final ExecutorService io = Executors.newFixedThreadPool(4);
+    private final Set<String> missing = Collections.synchronizedSet(new HashSet<>());     // 404: no tile there
+    private final java.util.Map<String, Long> retryAt = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final long RETRY_MS = 8_000;
+    // The base map, its labels and the radar frame on screen first; the other frames on their own, in the background.
+    private final ExecutorService io = Executors.newFixedThreadPool(4), prefetch = Executors.newFixedThreadPool(2);
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Listener listener;
 
@@ -70,10 +82,16 @@ final class MapTiles {
     }
 
     Bitmap radar(String host, String path, int z, int x, int y) {
+        return radar(host, path, z, x, y, false);
+    }
+
+    /** A radar tile; `background`: load it without holding up what's on screen (the animation's other frames). */
+    Bitmap radar(String host, String path, int z, int x, int y, boolean background) {
         int max = 1 << z;
         if (y < 0 || y >= max) return null;
         x = ((x % max) + max) % max;
-        return get("r" + path + "/" + z + "/" + x + "/" + y, host + path + "/256/" + z + "/" + x + "/" + y + "/2/1_1.png", true, true);
+        return get("r" + path + "/" + z + "/" + x + "/" + y, host + path + "/256/" + z + "/" + x + "/" + y + "/2/1_1.png", true, true,
+                background ? prefetch : io);
     }
 
     private Bitmap get(String key, String url, boolean alpha) {
@@ -81,19 +99,28 @@ final class MapTiles {
     }
 
     private Bitmap get(String key, String url, boolean alpha, boolean half) {
-        Bitmap b = cache.get(key);
-        if (b != null || missing.contains(key) || !loading.add(key)) return b;
-        io.execute(() -> {
+        return get(key, url, alpha, half, io);
+    }
+
+    private Bitmap get(String key, String url, boolean alpha, boolean half, ExecutorService pool) {
+        Bitmap b = cacheFor(key).get(key);
+        if (b != null || missing.contains(key)) return b;
+        Long again = retryAt.get(key);
+        if (again != null && System.currentTimeMillis() < again) return null;
+        if (!loading.add(key)) return null;
+        pool.execute(() -> {
             try {
                 HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
                 c.setConnectTimeout(8000);
                 c.setReadTimeout(12000);
                 c.setRequestProperty("User-Agent", "FreeMyTV (Android TV home screen)");
                 try {
-                    if (c.getResponseCode() != 200) {
+                    int status = c.getResponseCode();
+                    if (status == 404) {
                         missing.add(key);
                         return;
                     }
+                    if (status != 200) throw new java.io.IOException("HTTP " + status);
                     ByteArrayOutputStream out = new ByteArrayOutputStream();
                     try (InputStream in = c.getInputStream()) {
                         byte[] buf = new byte[16384];
@@ -105,16 +132,17 @@ final class MapTiles {
                     if (!alpha) o.inPreferredConfig = Bitmap.Config.RGB_565;
                     byte[] bytes = out.toByteArray();
                     Bitmap bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.length, o);
-                    if (bmp == null) missing.add(key);
-                    else {
-                        cache.put(key, bmp);
-                        main.post(listener::onTile);
-                    }
+                    if (bmp == null) throw new java.io.IOException("bad image");
+                    retryAt.remove(key);
+                    cacheFor(key).put(key, bmp);
+                    main.post(listener::onTile);
                 } finally {
                     c.disconnect();
                 }
             } catch (Exception e) {
-                missing.add(key);
+                // A timeout or a busy server on a loaded TV: try again in a few seconds, not never.
+                retryAt.put(key, System.currentTimeMillis() + RETRY_MS);
+                main.postDelayed(listener::onTile, RETRY_MS + 100);
             } finally {
                 loading.remove(key);
             }
@@ -124,6 +152,8 @@ final class MapTiles {
 
     void release() {
         io.shutdownNow();
+        prefetch.shutdownNow();
         cache.evictAll();
+        radarCache.evictAll();
     }
 }

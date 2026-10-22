@@ -733,13 +733,18 @@ public class WeatherActivity extends Activity {
                 c.drawText(names[i], x - tw - 24 * k, y + Ui.halfCap(p), p);
                 x -= Math.round(tw + 64 * k);
             }
-            fill.setColor(0xB3000000);
-            float lw = Math.max(small.measureText(legend), 420 * k) + 60 * k;
-            r.set(100 * k, h - 140 * k, 100 * k + lw, h - 60 * k);
-            c.drawRoundRect(r, 20 * k, 20 * k, fill);
-            c.drawText(legend, 130 * k, h - 92 * k, small);
+            // The legend: two lines with the same padding all around.
+            String credit = layer == RAIN ? "RainViewer · Esri, HERE, Garmin, OpenStreetMap" : "Open-Meteo · Esri, HERE, Garmin, OpenStreetMap";
             hint.setTextSize(18 * k);
-            c.drawText(layer == RAIN ? "RainViewer · Esri, HERE, Garmin, OpenStreetMap" : "Open-Meteo · Esri, HERE, Garmin, OpenStreetMap", 130 * k, h - 70 * k, hint);
+            small.setTextAlign(Paint.Align.LEFT);
+            float pad = 24 * k, gapLines = 12 * k, capA = Ui.cap(small), capB = Ui.cap(hint);
+            float boxW = Math.max(small.measureText(legend), hint.measureText(credit)) + 2 * pad;
+            float boxH = pad + capA + gapLines + capB + pad, boxL = 100 * k, boxB = h - 60 * k;
+            fill.setColor(0xB3000000);
+            r.set(boxL, boxB - boxH, boxL + boxW, boxB);
+            c.drawRoundRect(r, 20 * k, 20 * k, fill);
+            c.drawText(legend, boxL + pad, boxB - boxH + pad + capA, small);
+            c.drawText(credit, boxL + pad, boxB - pad, hint);
             hint.setTextSize(22 * k);
         }
 
@@ -749,13 +754,18 @@ public class WeatherActivity extends Activity {
             double scale = Math.pow(2, zoom - z);
             String p = radar.paths.get(frame);
             bmp.setAlpha(210);
+            String latest = radar.paths.get(radar.paths.size() - 1);
             int tz0x = (int) Math.floor(t0x / scale), tz0y = (int) Math.floor(t0y / scale);
             int tz1x = (int) Math.floor(t1x / scale), tz1y = (int) Math.floor(t1y / scale);
+            boolean screenReady = true;
             for (int ty = tz0y; ty <= tz1y; ty++) {
                 for (int tx = tz0x; tx <= tz1x; tx++) {
                     Bitmap b = tiles.radar(radar.host, p, z, tx, ty);
-                    // Load the other frames too, so the animation has them.
-                    for (String other : radar.paths) if (!other.equals(p)) tiles.radar(radar.host, other, z, tx, ty);
+                    // A frame still on its way: show the latest one there instead of a hole.
+                    if (b == null) {
+                        screenReady = false;
+                        b = tiles.radar(radar.host, latest, z, tx, ty);
+                    }
                     if (b == null) continue;
                     float size = (float) (ts * scale);
                     float sx = (float) ((tx * MapTiles.TILE * scale - ox) * k), sy = (float) ((ty * MapTiles.TILE * scale - oy) * k);
@@ -764,6 +774,13 @@ public class WeatherActivity extends Activity {
                 }
             }
             bmp.setAlpha(255);
+            // The other frames only after the one on screen is complete, in the background (the TV is slow).
+            if (screenReady) {
+                for (String other : radar.paths) {
+                    if (other.equals(p)) continue;
+                    for (int ty = tz0y; ty <= tz1y; ty++) for (int tx = tz0x; tx <= tz1x; tx++) tiles.radar(radar.host, other, z, tx, ty, true);
+                }
+            }
             // Time of the frame and where it is in the hour.
             long at = radar.times.get(frame);
             String when = Ui.time(at);
