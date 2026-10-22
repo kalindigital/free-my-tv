@@ -2540,6 +2540,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         tmp.offset(0, (10 + 14 * f) * k);
         shadowDeep.setColor(Ui.alpha(0xFF000000, tone(0.14f, 0.32f) + tone(0.2f, 0.28f) * f));
         shadows.draw(c, tmp, r, DEEP_BLUR * k, shadowDeep);
+        // Opaque first: `fill` keeps the alpha of whatever used it last (the tab pill fades with the focus), and a
+        // shader is drawn with the paint's alpha, so the card's background flickered as the focus moved.
+        fill.setColor(0xFF000000);
         fill.setShader(new LinearGradient(0, cell.top, 0, cell.bottom, top, bottom, Shader.TileMode.CLAMP));
         c.drawRoundRect(cell, r, r, fill);
         fill.setShader(null);
@@ -2669,6 +2672,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         tmp.offset(0, (10 + 14 * f) * k);
         shadowDeep.setColor(Ui.alpha(0xFF000000, tone(0.14f, 0.32f) + tone(0.2f, 0.28f) * f));
         shadows.draw(c, tmp, r, DEEP_BLUR * k, shadowDeep);
+        fill.setColor(0xFF000000);     // opaque: see homeCardBase
         fill.setShader(new LinearGradient(0, cell.top, 0, cell.bottom, tone(0xFFFFFFFF, 0xFF241B33), tone(0xFFF1EAFB, 0xFF15111D),
                 Shader.TileMode.CLAMP));
         c.drawRoundRect(cell, r, r, fill);
