@@ -112,7 +112,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private static final boolean BLACK_BACKGROUND = true;
     private static final int Z_TOP = 4, Z_CARDS = 5, Z_CINEMA = 6, Z_MARKET = 7, Z_SEARCH = 8, Z_BOARD = 9;
     // Markets: 4 × 2 cards; Search: the field, then the results as Cinemora rows (a little smaller).
-    private static final float M_TOP = 262, M_H = 240, M_GAP = 30, S_H = 68, S_W = 900, S_DY = 90, S_SCALE = 0.8f;
+    private static final float M_TOP = 262, M_H = 240, M_GAP = 30, S_H = 68, S_W = 900, S_DY = 90, S_SCALE = 0.85f;
     /** Without the apps (every tab but Home), the grids go down to here. */
     private static final float GRID_BOTTOM = 1020;
     // Movies and Shows with Cinemora: one category row of 2:3 posters at a time (▲▼ change the category).
@@ -125,8 +125,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private final Cinemora cinemora;
     private int cinemaRow, cinemaCol, cinemaFirst, cinemaTop;
     private final Map<Integer, Integer> rowFirst = new HashMap<>();     // each catalog row's own scroll
+    // The scroll's animation: rows up and down (in rows), each row's posters sideways (in posters).
+    private final Spring rowScroll = new Spring(0.34f, 1f, 0);
+    private final Map<Integer, Spring> colScroll = new HashMap<>();
     // Catalog tabs (Movies and Shows with Cinemora): two rows of posters, the shelf hidden.
-    private static final float K_SCALE = 0.95f, K_TITLE = 296, K_TOP = 318, K_STEP = 392;
+    private static final float K_SCALE = 0.95f, K_TITLE = 296, K_TOP = 318;
     private final Market market = Market.get();
     private final EsthetisMrr esthetis = EsthetisMrr.get();
     private final EsthetisBoard board = EsthetisBoard.get();
@@ -136,6 +139,20 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private static final int MRR_COLOR = 0xFFB07CFF;
     private final Runnable onMarket = () -> { if (this.tab == T_MARKET || this.tab == 0) this.heroDirty = true; };
     private int marketIndex;
+    // Focus springs for the other tabs' cards, like Home's cards (cardFocus): the focused one grows in, the one it
+    // left shrinks back, instead of switching at once. Posters: two rows (by row parity) × up to POSTERS columns.
+    private static final int POSTERS = 32;
+    private final Spring[] marketFocus = springs(8), boardFocus = springs(6), posterFocus = springs(2 * POSTERS);
+
+    private static Spring[] springs(int n) {
+        Spring[] out = new Spring[n];
+        for (int i = 0; i < n; i++) out[i] = new Spring(0.32f, 0.78f, 0);
+        return out;
+    }
+
+    private int posterKey(int row, int col) {
+        return (row % 2) * POSTERS + Math.min(col, POSTERS - 1);
+    }
     private String searchQuery = "", greetingShown = "";
     private SearchInput searchInput;
     private final Runnable runSearch = this::searchNow;
@@ -585,7 +602,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     /** What's typed in the search field (from HomeActivity's text field): searched 400 ms after the last key. */
     void setQuery(String q) {
         searchQuery = q == null ? "" : q;
-        cinemaRow = cinemaCol = cinemaFirst = 0;
+        cinemaRow = cinemaCol = cinemaFirst = cinemaTop = 0;
+        rowFirst.clear();
+        rowScroll.snap(0);
+        colScroll.clear();
         handler.removeCallbacks(runSearch);
         handler.postDelayed(runSearch, 400);
         heroDirty = true;
@@ -747,6 +767,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         boolean statusMoving = step(statusFocus, dt);
         boolean heroMoving = heroFocus.step(dt);
         boolean topMoving = step(topFocus, dt), cardsMoving = step(cardFocus, dt);
+        cardsMoving |= step(marketFocus, dt) | step(boardFocus, dt) | step(posterFocus, dt) | rowScroll.step(dt);
+        for (Spring h : colScroll.values()) cardsMoving |= h.step(dt);
         if (topMoving) status.invalidate();
         heroMoving |= topMoving | cardsMoving;
         boolean drawerItemsMoving = step(drawerFocus, dt);
@@ -1720,6 +1742,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (snap) heroFocus.snap(heroFocus.target);
         boolean topChanged = aim(topFocus, !sheetOpen && zone == Z_TOP ? topIndex : -1, snap);
         heroChanged |= aim(cardFocus, !sheetOpen && zone == Z_CARDS ? cardIndex : -1, snap) | topChanged;
+        heroChanged |= aim(marketFocus, !sheetOpen && zone == Z_MARKET ? marketIndex : -1, snap);
+        heroChanged |= aim(boardFocus, !sheetOpen && zone == Z_BOARD ? boardIndex : -1, snap);
+        heroChanged |= aim(posterFocus, !sheetOpen && zone == Z_CINEMA ? posterKey(cinemaRow, cinemaCol) : -1, snap);
         statusChanged |= topChanged;
         tilesDirty |= snap || tilesChanged;
         statusDirty |= snap || statusChanged;
@@ -2413,6 +2438,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         tab = index;
         cinemaRow = cinemaCol = cinemaFirst = cinemaTop = 0;
         rowFirst.clear();
+        rowScroll.snap(0);
+        colScroll.clear();
         if (tab == T_MARKET || tab == 0) market.refreshIfStale();
         updateCards();
         heroDirty = true;
@@ -2500,9 +2527,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         } else if (tab == T_SEARCH) {
             drawSearch(c);
         } else if (catalogTab()) {
-            drawCatalog(c);
-        } else if (cinema()) {
-            drawCinema(c, 0, 1);
+            drawCatalog(c, 0, K_SCALE);
         } else {
             int top = -1;
             for (int i = 0; i < 3; i++) if (cardFocus[i].value > 0.02f && (top < 0 || cardFocus[i].value > cardFocus[top].value)) top = i;
@@ -2774,38 +2799,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         return (int) ((CONTENT_R - MARGIN + C_GAP * scale) / ((C_W + C_GAP) * scale));
     }
 
-    /**
-     * Search results from Cinemora: the category's name, a row of posters (the focused one grows and lights its
-     * border, like the cards) and, under it, the focused title with its year and rating. ▲▼ go through the rows; the
-     * next one's name shows on the right (Inter has no ▾).
-     */
-    private void drawCinema(Canvas c, float dy, float scale) {
-        List<Cinemora.Row> rows = cinemaRows();
-        cinemaRow = Math.min(cinemaRow, rows.size() - 1);
-        Cinemora.Row row = rows.get(cinemaRow);
-        cinemaCol = Math.min(cinemaCol, row.items.size() - 1);
-        int visible = cinemaVisible(scale);
-        cinemaFirst = scrolledFirst(cinemaFirst, cinemaCol, visible, row.items.size());
-        boolean focusedRow = zone == Z_CINEMA && !sheetOpen;
-        float left = MARGIN * k, top = (C_TOP + dy) * k, ch = C_H * k * scale;
-
-        c.drawText(row.title, left, (C_ROW_TITLE + dy) * k, lCardTitle);
-        String where = (cinemaRow + 1) + " / " + rows.size()
-                + (cinemaRow + 1 < rows.size() ? Ui.tr("   ·   A seguir: ", "   ·   Next: ", "   ·   Siguiente: ")
-                + rows.get(cinemaRow + 1).title : "");
-        c.drawText(where, CONTENT_R * k - lCardMeta.measureText(where), (C_ROW_TITLE + dy) * k, lCardMeta);
-
-        int focused = focusedRow ? cinemaCol : -1;
-        drawPosters(c, row, cinemaFirst, visible, focused, top, scale);
-        if (focused >= 0) {
-            Cinemora.Item it = row.items.get(focused);
-            float base = top + ch + 62 * k;
-            c.drawText(TextUtils.ellipsize(it.title, new TextPaint(lCardTitle), (CONTENT_R - MARGIN) * k,
-                    TextUtils.TruncateAt.END).toString(), left, base, lCardTitle);
-            c.drawText(itemMeta(it), left, base + 36 * k, lCardMeta);
-        }
-    }
-
     /** "2025  ·  ★ 8.0  ·  Cinemora". */
     private static String itemMeta(Cinemora.Item it) {
         StringBuilder meta = new StringBuilder();
@@ -2824,14 +2817,17 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     /** A row of posters from `first`, at `top`; the focused one (or -1) grows, rises and lights its border. */
-    private void drawPosters(Canvas c, Cinemora.Row row, int first, int visible, int focused, float top, float scale) {
+    /** A row of posters scrolled to `first` (fractional while it slides), at `top`; focus grows by its spring. */
+    private void drawPosters(Canvas c, Cinemora.Row row, int rowIndex, float first, int visible, float top, float scale) {
         float left = MARGIN * k, cw = C_W * k * scale, ch = C_H * k * scale, gap = C_GAP * k * scale, r0 = 16 * k * scale;
+        int from = Math.max(0, (int) Math.floor(first) - 1), to = Math.min(row.items.size(), (int) Math.ceil(first) + visible + 1);
         for (int pass = 0; pass < 2; pass++) {      // the focused poster last, over its neighbours
-            for (int i = first; i < Math.min(row.items.size(), first + visible); i++) {
-                if ((i == focused) != (pass == 1)) continue;
+            for (int i = from; i < to; i++) {
+                float v = posterFocus[posterKey(rowIndex, i)].value, f = Ui.clamp(v), s = 1 + 0.06f * v;
+                if ((f > 0.01f) != (pass == 1)) continue;
                 Cinemora.Item it = row.items.get(i);
-                float f = i == focused ? 1 : 0, s = 1 + 0.06f * f;
                 float cx = left + (i - first) * (cw + gap) + cw / 2, cy = top + ch / 2 - 6 * k * f;
+                if (cx + cw < 0 || cx - cw > getWidth()) continue;
                 cell.set(cx - cw * s / 2, cy - ch * s / 2, cx + cw * s / 2, cy + ch * s / 2);
                 float r = r0 * s;
                 tmp.set(cell);
@@ -2853,9 +2849,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                     name.draw(c);
                     c.restore();
                 }
-                if (f > 0) {
+                if (f > 0.01f) {
                     rim.setShader(new LinearGradient(0, cell.top, 0, cell.bottom,
-                            Ui.alpha(0xFFFFFFFF, 0.9f), Ui.alpha(0xFFFFFFFF, 0.35f), Shader.TileMode.CLAMP));
+                            Ui.alpha(0xFFFFFFFF, 0.9f * f), Ui.alpha(0xFFFFFFFF, 0.35f * f), Shader.TileMode.CLAMP));
                     c.drawRoundRect(cell, r, r, rim);
                 }
             }
@@ -2869,22 +2865,29 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     /**
      * The catalog: two rows at a time in Cinemora's order, each with its name, its posters and, on the focused one,
-     * the focused title with year and rating at the right. Each row keeps its own scroll; ▲▼ go to the row above or
-     * below, and the pair scrolls with the focus.
+     * the focused title with year and rating at the right. ▲▼ slide the rows up or down and ◀▶ slide the posters
+     * (springs, like the focus); each row keeps its own scroll. Search shows its results the same way, under the field
+     * (`dy`, a little smaller).
      */
-    private void drawCatalog(Canvas c) {
+    private void drawCatalog(Canvas c, float dy, float scale) {
         List<Cinemora.Row> rows = cinemaRows();
         cinemaRow = Math.min(cinemaRow, rows.size() - 1);
         if (cinemaRow < cinemaTop) cinemaTop = cinemaRow;
         if (cinemaRow > cinemaTop + 1) cinemaTop = cinemaRow - 1;
         cinemaTop = Math.max(0, Math.min(cinemaTop, rows.size() - 2));
-        int visible = cinemaVisible(K_SCALE);
+        rowScroll.target = cinemaTop;
+        int visible = cinemaVisible(scale);
         boolean focusedZone = zone == Z_CINEMA && !sheetOpen;
-        float left = MARGIN * k, right = CONTENT_R * k;
-        for (int slot = 0; slot < 2 && cinemaTop + slot < rows.size(); slot++) {
-            int index = cinemaTop + slot;
+        float left = MARGIN * k, right = CONTENT_R * k, step = C_H * scale + 76;
+        float scroll = rowScroll.value;
+        // Rows slide through the band from the first row's title to the second row's posters (nothing peeks below);
+        // sideways the posters run to the screen's edges, so the next ones show there as a hint to keep going.
+        c.save();
+        c.clipRect(0, (K_TITLE + dy - 40) * k, getWidth(), (K_TOP + dy + step) * k + C_H * scale * k + 20 * k);
+        for (int index = Math.max(0, (int) Math.floor(scroll) - 1); index < Math.min(rows.size(), (int) Math.floor(scroll) + 3); index++) {
             Cinemora.Row row = rows.get(index);
-            float titleY = (K_TITLE + slot * K_STEP) * k, top = (K_TOP + slot * K_STEP) * k;
+            float slot = index - scroll;
+            float titleY = (K_TITLE + dy + slot * step) * k, top = (K_TOP + dy + slot * step) * k;
             int first = firstOf(index);
             int focused = -1;
             if (focusedZone && index == cinemaRow) {
@@ -2893,13 +2896,20 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 rowFirst.put(index, first);
                 focused = cinemaCol;
             }
+            Spring h = colScroll.get(index);
+            if (h == null) {
+                h = new Spring(0.34f, 1f, first);
+                colScroll.put(index, h);
+            }
+            h.target = first;
             c.drawText(row.title, left, titleY, lCardTitle);
             String info = focused >= 0 ? row.items.get(focused).title + "   ·   " + itemMeta(row.items.get(focused))
                     : (index + 1) + " / " + rows.size();
             info = TextUtils.ellipsize(info, new TextPaint(lCardMeta), (right - left) * 0.6f, TextUtils.TruncateAt.START).toString();
             c.drawText(info, right - lCardMeta.measureText(info), titleY, lCardMeta);
-            drawPosters(c, row, first, visible, focused, top, K_SCALE);
+            drawPosters(c, row, index, h.value, visible, top, scale);
         }
+        c.restore();
     }
 
     private int firstOf(int row) {
@@ -2907,12 +2917,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         return f == null ? 0 : f;
     }
 
-    /** The Markets card i (4 columns, 2 rows). */
     /** The height of a Markets or Esthetis card: two rows filling the screen down to GRID_BOTTOM. */
     private float gridCardH() {
         return (GRID_BOTTOM - M_TOP - M_GAP) / 2 * k;
     }
 
+    /** The Markets card i (4 columns, 2 rows). */
     private void marketRect(int i, RectF out) {
         float gap = M_GAP * k, cw = ((CONTENT_R - MARGIN) * k - 3 * gap) / 4, ch = gridCardH();
         float x = MARGIN * k + (i % 4) * (cw + gap), y = M_TOP * k + (i / 4) * (ch + gap);
@@ -2927,10 +2937,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         int focused = zone == Z_MARKET && !sheetOpen ? marketIndex : -1;
         for (int pass = 0; pass < 2; pass++) {
             for (int i = 0; i < Market.ASSETS.length; i++) {
-                if ((i == focused) != (pass == 1)) continue;
+                float v = marketFocus[i].value, f = Ui.clamp(v), s = 1 + 0.04f * v;
+                if ((f > 0.01f) != (pass == 1)) continue;     // the growing card over its neighbours
                 Market.Asset a = Market.ASSETS[i];
                 Market.Quote q = market.quotes[i];
-                float f = i == focused ? 1 : 0, s = 1 + 0.04f * f;
                 marketRect(i, tmp);
                 float cx = tmp.centerX(), cy = tmp.centerY() - 4 * k * f, bw = tmp.width() * s, bh = tmp.height() * s;
                 cell.set(cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2);
@@ -2940,9 +2950,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 shadowDeep.setColor(Ui.alpha(0xFF000000, tone(0.1f, 0.3f) + tone(0.14f, 0.2f) * f));
                 shadows.draw(c, tmp, r, DEEP_BLUR * k, shadowDeep);
                 fill.setShader(null);
-                fill.setColor(f > 0 ? 0xFFFFFFFF : tone(0xEBFFFFFF, 0xFF1C1C1E));
+                fill.setColor(blend(tone(0xEBFFFFFF, 0xFF1C1C1E), 0xFFFFFFFF, f));
                 c.drawRoundRect(cell, r, r, fill);
-                int ink = f > 0 ? L_INK : tone(L_INK, WHITE), dim = f > 0 ? L_DIM : tone(L_DIM, 0x99FFFFFF);
+                int ink = blend(tone(L_INK, WHITE), L_INK, f), dim = blend(tone(L_DIM, 0x99FFFFFF), L_DIM, f);
                 float x = cell.left + 26 * k;
                 lCardMeta.setColor(dim);
                 c.drawText(a.name, x, cell.top + 46 * k, lCardMeta);
@@ -2953,7 +2963,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 c.drawText(Market.percent(q.change), x, cell.top + 140 * k, mChange);
                 if (q.closes.length > 1) {
                     double min = Double.MAX_VALUE, max = -Double.MAX_VALUE;
-                    for (double v : q.closes) { min = Math.min(min, v); max = Math.max(max, v); }
+                    for (double val : q.closes) { min = Math.min(min, val); max = Math.max(max, val); }
                     if (max - min < 1e-9) max = min + 1;
                     float sl = x, sr = cell.right - 26 * k, st = cell.top + 160 * k, sb = cell.bottom - 22 * k;
                     spark.reset();
@@ -2994,9 +3004,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         int focused = zone == Z_BOARD && !sheetOpen ? boardIndex : -1;
         for (int pass = 0; pass < 2; pass++) {
             for (int i = 0; i < Math.min(6, list.size()); i++) {
-                if ((i == focused) != (pass == 1)) continue;
+                float v = boardFocus[i].value, f = Ui.clamp(v), s = 1 + 0.03f * v;
+                if ((f > 0.01f) != (pass == 1)) continue;
                 EsthetisBoard.Card card = list.get(i);
-                float f = i == focused ? 1 : 0, s = 1 + 0.03f * f;
                 boardRect(i, tmp);
                 float cx = tmp.centerX(), cy = tmp.centerY() - 4 * k * f, bw = tmp.width() * s, bh = tmp.height() * s;
                 cell.set(cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2);
@@ -3006,9 +3016,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 shadowDeep.setColor(Ui.alpha(0xFF000000, tone(0.1f, 0.3f) + tone(0.14f, 0.2f) * f));
                 shadows.draw(c, tmp, r, DEEP_BLUR * k, shadowDeep);
                 fill.setShader(null);
-                fill.setColor(f > 0 ? 0xFFFFFFFF : tone(0xEBFFFFFF, 0xFF1C1C1E));
+                fill.setColor(blend(tone(0xEBFFFFFF, 0xFF1C1C1E), 0xFFFFFFFF, f));
                 c.drawRoundRect(cell, r, r, fill);
-                int ink = f > 0 ? L_INK : tone(L_INK, WHITE), dim = f > 0 ? L_DIM : tone(L_DIM, 0x99FFFFFF);
+                int ink = blend(tone(L_INK, WHITE), L_INK, f), dim = blend(tone(L_DIM, 0x99FFFFFF), L_DIM, f);
                 float x = cell.left + 26 * k, right = cell.right - 26 * k;
                 lCardMeta.setColor(dim);
                 c.drawText(card.title, x, cell.top + 46 * k, lCardMeta);
@@ -3031,7 +3041,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 if (series.length < 2) continue;
                 float st = cell.top + 162 * k, sb = cell.bottom - 20 * k;
                 double max = 0, min = card.bars ? 0 : Double.MAX_VALUE;
-                for (double v : series) { max = Math.max(max, v); if (!card.bars) min = Math.min(min, v); }
+                for (double val : series) { max = Math.max(max, val); if (!card.bars) min = Math.min(min, val); }
                 if (max - min < 1e-9) max = min + 1;
                 if (card.bars) {
                     float slot = (right - x) / series.length, gap = Math.max(2 * k, slot * 0.25f);
@@ -3089,7 +3099,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                     "OK para escribir o hablar con el teclado del TV.");
         }
         if (note != null) c.drawText(note, left, top + h + 60 * k, lCardMeta);
-        if (cinema()) drawCinema(c, S_DY, S_SCALE);
+        if (cinema()) drawCatalog(c, S_DY, S_SCALE);
     }
 
     /**
