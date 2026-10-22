@@ -108,6 +108,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         out[tabs.length] = "Esthetis";
         return out;
     }
+    /** Black background on every tab (the photo and gradient code stays for a lighter look later). */
+    private static final boolean BLACK_BACKGROUND = true;
     private static final int Z_TOP = 4, Z_CARDS = 5, Z_CINEMA = 6, Z_MARKET = 7, Z_SEARCH = 8, Z_BOARD = 9;
     // Markets: 4 × 2 cards; Search: the field, then the results as Cinemora rows (a little smaller).
     private static final float M_TOP = 262, M_H = 240, M_GAP = 30, S_H = 68, S_W = 900, S_DY = 90, S_SCALE = 0.8f;
@@ -964,7 +966,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     /** Day or night right now (from the sun at your location); `animate`: with the transition. */
     private void checkNight(boolean animate) {
-        boolean want = data.isNight(System.currentTimeMillis());
+        // The background is always black, so always the night look (light text and smoked glass).
+        boolean want = true;
         if (want == nightTarget) return;
         nightTarget = want;
         if (animate && running) {
@@ -2420,6 +2423,14 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
      * same photo almost black (or a dark gradient), drawn on top during the transition.
      */
     private void drawLightSky(Canvas c) {
+        // Plain black on every tab, by choice: no photo or gradient behind the content.
+        if (BLACK_BACKGROUND) {
+            fill.setShader(null);
+            fill.setColorFilter(null);
+            fill.setColor(0xFF000000);
+            c.drawRect(screen, fill);
+            return;
+        }
         long up = SystemClock.uptimeMillis();
         float e = bgFadeAt == 0 ? 1 : fadeEase(bgFadeAt, up);
         boolean fading = bgFadeAt != 0;

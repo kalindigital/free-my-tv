@@ -17,3 +17,4 @@
 - [x] Home (antes "Explorar"): Tempo, Cotações e Esthetis no lugar das sugestões, sem os títulos de baixo; gaveta só com entradas e atalhos.
 - [x] Apps só na Home; Filmes e Séries com duas fileiras do catálogo por vez, tela inteira.
 - [x] Tela Tempo (OK no cartão de tempo): previsão completa estilo iPhone, mapas de chuva (radar animado), temperatura e vento, e cidades com busca (PLANO-TEMPO.md).
+- [x] Fundo preto em todas as abas (visual noturno fixo) e janela preta ao abrir, sem tela branca.
