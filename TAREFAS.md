@@ -19,3 +19,14 @@
 - [x] Tela Tempo (OK no cartão de tempo): previsão completa estilo iPhone, mapas de chuva (radar animado), temperatura e vento, e cidades com busca (PLANO-TEMPO.md).
 - [x] Fundo preto em todas as abas (visual noturno fixo) e janela preta ao abrir, sem tela branca.
 - [x] Animação de foco em todas as abas e rolagem animada (fileiras e capas) em Filmes, Séries e Busca; Busca com duas fileiras.
+- [x] Cinemora vazio não prende mais a grade antiga: lista vazia tenta de novo em 30 s em vez de 10 min.
+- [x] Filmes e Séries: "Continuar assistindo" e "Favoritos" como primeiras fileiras (vêm do Cinemora).
+- [x] Home: rede conectada e hora no lugar de Bitcoin e Ethereum ao lado das abas.
+- [x] Protetor de tela novo: data e hora no topo, clima alternando horas/dias a cada minuto, notícias ocultas, fundo fluido/paisagem/espaço, Voltar duas vezes na Home abre (PLANO-PROTETOR.md).
+- [x] Protetor: troca das próximas horas/dias com fade, deslize lento contra marcas (sem pulo a cada minuto), cores fluidas aleatórias que mudam com o tempo.
+- [x] Protetor: fundo "Vídeo aéreo" (vídeos da Apple TV, como no macOS), em loop e sem som, com um vídeo escolhido ou aleatório a cada abertura.
+- [x] Voltar em qualquer aba leva à aba Home.
+- [x] Protetor: fundo "Tempo ao vivo" (sol, lua e estrelas, nuvens, chuva, garoa, neve, neblina e tempestade com relâmpagos, pelo código do tempo atual).
+- [x] Ajustes valem na hora para o protetor (as preferências são lidas entre processos; antes o protetor guardava a escolha antiga).
+- [x] Escolha do vídeo do protetor numa grade com a imagem de cada vídeo (`VideoPickerActivity`, imagens em `app/assets/aerial`).
+- [ ] Tempo ao vivo mais realista (céu pela hora do dia, sol no arco, nuvens em camadas, chuva/neve com profundidade, raios) — instalado, falta conferir na TV.

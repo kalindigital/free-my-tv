@@ -17,15 +17,22 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * The screensaver as an information board on plain black: the clock and date, today's weather with the next hours,
- * the week's forecast and the day's top headlines. Redrawn once a minute, and the whole board moves a few pixels each
- * minute so nothing stays burned into the panel. The arrows pick a headline and OK opens it ({@link Opener}).
+ * The screensaver as an information board over its background ({@link DreamBackground}): the date at the top left with
+ * the time under it, and at the bottom right the weather, which takes turns each minute between now with the next hours
+ * and the next days. Redrawn once a minute, and the whole board moves a few pixels each minute so nothing stays burned
+ * into the panel. The day's headlines are hidden for now ({@link #SHOW_NEWS}); with them on, the arrows pick one and OK
+ * opens it ({@link Opener}).
  */
 final class InfoView extends View implements HomeData.Listener {
     private static final float LEFT = 120, RIGHT = 1800;
     /** What a key does on the board: nothing here (the system's), handled, or ends the screensaver. */
     static final int PASS = 0, HANDLED = 1, EXIT = 2;
     private static final long IDLE_MS = 30_000;
+    /** The headlines at the bottom: off until something else is decided for that space. */
+    static final boolean SHOW_NEWS = false;
+    private static final long ROW_FADE_MS = 900;
+    private boolean rowDays, rowDrawn;
+    private long switchAt;
 
     interface Opener { void open(Rss.Headline headline); }
 
@@ -35,7 +42,7 @@ final class InfoView extends View implements HomeData.Listener {
     private boolean running;
     private int w, h;
     private float k = 1;
-    private Paint datePaint, clockPaint, tempPaint, rangePaint, cityPaint, smallPaint, smallDim, labelPaint, rule;
+    private Paint datePaint, clockPaint, tempPaint, rangePaint, smallPaint, smallDim, labelPaint, rule;
     private TextPaint headlinePaint, sourcePaint;
     private Paint pill, hintPaint;
     private final RectF row = new RectF();
@@ -50,9 +57,10 @@ final class InfoView extends View implements HomeData.Listener {
         @Override public void run() {
             if (!running) return;
             data.refreshIfStale();
-            news.refreshIfStale();
+            if (SHOW_NEWS) news.refreshIfStale();
             invalidate();
             long now = System.currentTimeMillis();
+            drift(now / 60_000);
             handler.postDelayed(this, 60_000 - now % 60_000 + 50);
         }
     };
@@ -91,21 +99,24 @@ final class InfoView extends View implements HomeData.Listener {
         w = width;
         h = height;
         k = w / 1920f;
-        datePaint = Ui.text(Ui.semibold, 40 * k, 0xB3FFFFFF);
-        clockPaint = Ui.numbers(Ui.thin, 230 * k, 0xF2FFFFFF);
-        clockPaint.setLetterSpacing(-0.01f);
+        datePaint = Ui.text(Ui.thin, 46 * k, 0xE6FFFFFF);
+        datePaint.setShadowLayer(18 * k, 0, 2 * k, 0x66000000);
+        clockPaint = Ui.numbers(Ui.semibold, 150 * k, 0xF2FFFFFF);
+        clockPaint.setShadowLayer(18 * k, 0, 2 * k, 0x66000000);
         tempPaint = Ui.numbers(Ui.thin, 110 * k, 0xF2FFFFFF);
         tempPaint.setTextAlign(Paint.Align.RIGHT);
         rangePaint = Ui.numbers(Ui.medium, 30 * k, 0xB3FFFFFF);
         rangePaint.setTextAlign(Paint.Align.RIGHT);
-        cityPaint = Ui.text(Ui.medium, 26 * k, 0x80FFFFFF);
-        cityPaint.setTextAlign(Paint.Align.RIGHT);
         smallPaint = Ui.numbers(Ui.medium, 28 * k, 0xE6FFFFFF);
         smallPaint.setTextAlign(Paint.Align.CENTER);
         smallDim = Ui.numbers(Ui.regular, 26 * k, 0x80FFFFFF);
         smallDim.setTextAlign(Paint.Align.CENTER);
-        labelPaint = Ui.text(Ui.medium, 22 * k, 0x80FFFFFF);
+        labelPaint = Ui.text(Ui.medium, 22 * k, 0x99FFFFFF);
         labelPaint.setLetterSpacing(0.12f);
+        // Over a photo the weather needs the same soft shadow as the date and time.
+        for (Paint p : new Paint[] {tempPaint, rangePaint, smallPaint, smallDim, labelPaint}) {
+            p.setShadowLayer(14 * k, 0, 2 * k, 0x66000000);
+        }
         headlinePaint = new TextPaint(Ui.text(Ui.medium, 34 * k, 0xE6FFFFFF));
         sourcePaint = new TextPaint(Ui.text(Ui.regular, 26 * k, 0x73FFFFFF));
         pill = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -119,36 +130,61 @@ final class InfoView extends View implements HomeData.Listener {
 
     @Override protected void onDraw(Canvas c) {
         if (w == 0) return;
-        c.drawColor(0xFF000000);
-        long now = System.currentTimeMillis();
-        long minute = now / 60_000;
-        // Pixel shift against burn-in: a 5x5 grid of positions, 6 px apart, one step a minute.
-        c.save();
-        c.translate(((minute % 5) - 2) * 6 * k, (((minute / 5) % 5) - 2) * 6 * k);
-        try {
-            draw(c, now);
-        } finally {
-            c.restore();
-        }
+        draw(c, System.currentTimeMillis());
     }
 
     private void draw(Canvas c, long now) {
         float left = LEFT * k, right = RIGHT * k;
-        c.drawText(Ui.date(now), left, 130 * k, datePaint);
-        c.drawText(Ui.clock(now), left - Ui.leftBearing(clockPaint, Ui.clock(now)), 340 * k, clockPaint);
+        String date = Ui.date(now);
+        if (!date.isEmpty()) date = Character.toUpperCase(date.charAt(0)) + date.substring(1);
+        c.drawText(date, left - Ui.leftBearing(datePaint, date), 140 * k, datePaint);
+        c.drawText(Ui.clock(now), left - Ui.leftBearing(clockPaint, Ui.clock(now)), 300 * k, clockPaint);
 
         HomeData.Weather wx = data.weather;
         if (Prefs.weather() && !Double.isNaN(wx.temp)) {
             drawToday(c, wx, right);
-            if (!wx.days.isEmpty()) drawWeek(c, wx, left, right);
+            boolean days = Turns.showDays(now / 60_000) && !wx.days.isEmpty();
+            if (days != rowDays) {
+                // The first frame shows the row as it is; after that, each change fades.
+                switchAt = rowDrawn ? android.os.SystemClock.uptimeMillis() : 0;
+                rowDays = days;
+            }
+            rowDrawn = true;
+            float t = Math.min(1, (android.os.SystemClock.uptimeMillis() - switchAt) / (float) ROW_FADE_MS);
+            if (t < 1) {
+                drawRow(c, wx, right, !days, 1 - t);
+                postInvalidateOnAnimation();
+            }
+            drawRow(c, wx, right, days, t);
         }
-        drawNews(c, left, right);
+        if (SHOW_NEWS) drawNews(c, left, right);
     }
 
-    /** Top right: symbol and temperature now, high and low, the city, then the next hours. */
+    /**
+     * Against burn-in the board keeps moving over a 5 × 5 grid of positions 6 px apart, one a minute. It glides to the
+     * next one over the whole minute (on the render thread, without redrawing), so it never visibly jumps.
+     */
+    private void drift(long minute) {
+        animate().translationX(Turns.shift(minute) * 6 * k).translationY(Turns.shift(minute / 5) * 6 * k)
+                .setDuration(58_000).setInterpolator(new android.view.animation.LinearInterpolator()).start();
+    }
+
+    /** The weather block's turns (apart from the view, so the plain-Java tests can load it without Android). */
+    static final class Turns {
+        /** Now and the next hours one minute, the next days the next. */
+        static boolean showDays(long minute) { return minute % 2 == 1; }
+
+        /** The board's step on one axis: -2 to 2, back and forth (0 1 2 1 0 -1 -2 -1 …), so each move is one step. */
+        static int shift(long step) {
+            int[] path = {0, 1, 2, 1, 0, -1, -2, -1};
+            return path[(int) (step % path.length)];
+        }
+    }
+
+    /** Bottom right: symbol and temperature now, the city, high and low (always there; the row under it takes turns). */
     private void drawToday(Canvas c, HomeData.Weather wx, float right) {
         String temp = HomeData.degrees(wx.temp);
-        float base = 190 * k;
+        float base = 742 * k;
         c.drawText(temp, right, base, tempPaint);
         String symbol = Symbols.weather(wx.code, wx.isDay);
         float size = 76 * k, sw = Symbols.width(getContext(), symbol, size);
@@ -156,33 +192,53 @@ final class InfoView extends View implements HomeData.Listener {
                 base - Ui.cap(tempPaint) / 2, size, 0xE6FFFFFF);
         String range = Ui.tr("Máx. ", "H: ", "Máx. ") + HomeData.degrees(wx.max) + "   "
                 + Ui.tr("Mín. ", "L: ", "Mín. ") + HomeData.degrees(wx.min);
-        c.drawText(range, right, 240 * k, rangePaint);
-        if (!Prefs.city().isEmpty()) c.drawText(Prefs.city(), right, 278 * k, cityPaint);
+        String place = Prefs.city().isEmpty() ? range : Prefs.city() + "  ·  " + range;
+        c.drawText(place, right, 792 * k, rangePaint);
+    }
 
+    /** The row under the temperature (the next days or the next hours) at `alpha`, for the fade between them. */
+    private void drawRow(Canvas c, HomeData.Weather wx, float right, boolean days, float alpha) {
+        if (alpha <= 0.01f) return;
+        boolean faded = alpha < 0.99f;
+        if (faded) c.saveLayerAlpha(right - 1000 * k, 820 * k, right + 60 * k, 1050 * k, Math.round(255 * alpha));
+        if (days) drawWeek(c, wx, right); else drawHours(c, wx, right);
+        if (faded) c.restore();
+    }
+
+    /** Under the temperature: the next hours. */
+    private void drawHours(Canvas c, HomeData.Weather wx, float right) {
         int n = Math.min(6, wx.hours.size());
-        float col = 112 * k, x0 = right - col * n + col / 2;
         SimpleDateFormat hour = Ui.en ? new SimpleDateFormat("h a", Locale.US) : new SimpleDateFormat("H'h'", Ui.locale());
+        if (n == 0) return;
+        // The columns are centered, so the last one's widest text ends exactly at the right edge, like the lines above.
+        float last = Math.max(smallDim.measureText(hour.format(new Date(wx.hours.get(n - 1)))),
+                smallPaint.measureText(HomeData.degrees(wx.hourTemp.get(n - 1))));
+        float col = 112 * k, x0 = right - last / 2 - col * (n - 1);
         for (int i = 0; i < n; i++) {
             float cx = x0 + i * col;
-            c.drawText(hour.format(new Date(wx.hours.get(i))), cx, 330 * k, smallDim);
-            Symbols.draw(getContext(), c, Symbols.weather(wx.hourCode.get(i), wx.hourDay.get(i)), cx, 370 * k, 32 * k, 0xCCFFFFFF);
-            c.drawText(HomeData.degrees(wx.hourTemp.get(i)), cx, 424 * k, smallPaint);
+            c.drawText(hour.format(new Date(wx.hours.get(i))), cx, 880 * k, smallDim);
+            Symbols.draw(getContext(), c, Symbols.weather(wx.hourCode.get(i), wx.hourDay.get(i)), cx, 922 * k, 32 * k, 0xCCFFFFFF);
+            c.drawText(HomeData.degrees(wx.hourTemp.get(i)), cx, 976 * k, smallPaint);
         }
     }
 
-    /** The week across the screen: day, symbol, high and low. */
-    private void drawWeek(Canvas c, HomeData.Weather wx, float left, float right) {
-        c.drawLine(left, 480 * k, right, 480 * k, rule);
-        c.drawText(Ui.tr("PRÓXIMOS DIAS", "THIS WEEK", "PRÓXIMOS DÍAS"), left, 522 * k, labelPaint);
+    /**
+     * Under the temperature, in place of the hours: the next days. Each day is one narrow column (the day, the symbol,
+     * the high and, under it and dimmer, the low), so the days read apart instead of as one run of numbers.
+     */
+    private void drawWeek(Canvas c, HomeData.Weather wx, float right) {
         int n = Math.min(7, wx.days.size());
-        float col = (right - left) / n;
         SimpleDateFormat day = new SimpleDateFormat("EEE", Ui.locale());
+        float last = Math.max(smallDim.measureText(weekday(day, wx.days.get(n - 1))),
+                smallPaint.measureText(HomeData.degrees(wx.dayMax.get(n - 1))));
+        float col = 112 * k, x0 = right - last / 2 - col * (n - 1);
         for (int i = 0; i < n; i++) {
-            float cx = left + col * i + col / 2;
+            float cx = x0 + col * i;
             String name = i == 0 ? Ui.tr("Hoje", "Today", "Hoy") : weekday(day, wx.days.get(i));
-            c.drawText(name, cx, 574 * k, smallPaint);
-            Symbols.draw(getContext(), c, Symbols.weather(wx.dayCode.get(i), true), cx, 620 * k, 40 * k, 0xCCFFFFFF);
-            c.drawText(HomeData.degrees(wx.dayMax.get(i)) + "  " + HomeData.degrees(wx.dayMin.get(i)), cx, 676 * k, smallDim);
+            c.drawText(name, cx, 880 * k, smallDim);
+            Symbols.draw(getContext(), c, Symbols.weather(wx.dayCode.get(i), true), cx, 922 * k, 32 * k, 0xCCFFFFFF);
+            c.drawText(HomeData.degrees(wx.dayMax.get(i)), cx, 976 * k, smallPaint);
+            c.drawText(HomeData.degrees(wx.dayMin.get(i)), cx, 1014 * k, smallDim);
         }
     }
 
@@ -230,7 +286,7 @@ final class InfoView extends View implements HomeData.Listener {
             default:
                 return EXIT;    // Back and every other key: like any screensaver, it ends
         }
-        List<Rss.Headline> list = news.headlines;
+        List<Rss.Headline> list = SHOW_NEWS ? news.headlines : java.util.Collections.<Rss.Headline>emptyList();
         if (list.isEmpty()) return EXIT;    // nothing to pick: like before, any key ends it
         if (!down) return HANDLED;
         int n = list.size();

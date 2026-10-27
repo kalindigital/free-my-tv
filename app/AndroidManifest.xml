@@ -6,6 +6,9 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- The Wi-Fi name on the home screen: Android shows it only to apps with the location permission. -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <!-- After the TV boots (and after a TV update), checks that Free My TV mode is still as you left it. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- Cinemora's movie and show rows (Cinemora.java). Granted only if Cinemora is installed first. -->
@@ -50,7 +53,8 @@
         android:icon="@drawable/icon"
         android:banner="@drawable/banner"
         android:allowBackup="false"
-        android:usesCleartextTraffic="false">
+        android:usesCleartextTraffic="false"
+        android:networkSecurityConfig="@xml/network_security_config">
 
         <!-- The app's icon opens the settings (switch between Free My TV and the original home screen). -->
         <activity
@@ -126,6 +130,16 @@
             android:theme="@style/FreeMyTV.Home" />
 
         <!-- An Esthetis tab card, full screen. -->
+        <!-- The screensaver video, picked from a grid of pictures (Home Settings). -->
+        <activity
+            android:name=".VideoPickerActivity"
+            android:process=":home"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:screenOrientation="landscape"
+            android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|smallestScreenSize|uiMode|density|fontScale|locale|layoutDirection"
+            android:theme="@style/FreeMyTV.Home" />
+
         <activity
             android:name=".ChartActivity"
             android:process=":home"

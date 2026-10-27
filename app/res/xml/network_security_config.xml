@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Everything stays HTTPS-only, except Apple's aerial videos, which that host serves only over plain HTTP. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">a1.phobos.apple.com</domain>
+    </domain-config>
+</network-security-config>
