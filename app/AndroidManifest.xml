@@ -172,6 +172,17 @@
             </intent-filter>
         </service>
 
+        <!-- Notification access for this one lets the screensaver show what's playing (NowPlaying). -->
+        <service
+            android:name=".NowPlayingListener"
+            android:exported="true"
+            android:label="Free My TV"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
         <!-- The same screensaver on Android 11, in the main process (see ScreensaverAlone). -->
         <service
             android:name=".ScreensaverAlone"

@@ -1986,7 +1986,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             long now = android.os.SystemClock.uptimeMillis();
             if (now - lastBack < 1_500) {
                 lastBack = 0;
-                openScreensaver();
+                RemoteKeys.openScreensaver(activity);
                 return;
             }
             lastBack = now;
@@ -2013,16 +2013,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         click.move();
     }
 
-    /** The system's screensaver (Free My TV's, in Free My TV mode); if the TV won't start it, the preview in Settings. */
-    private void openScreensaver() {
-        try {
-            activity.startActivity(new android.content.Intent().setClassName("com.android.systemui", "com.android.systemui.Somnambulator")
-                    .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK));
-        } catch (RuntimeException e) {
-            AppLog.w("screensaver: " + e.getMessage());
-            activity.startActivity(new android.content.Intent(activity, SettingsActivity.class).putExtra("screensaver", true));
-        }
-    }
 
     private void move(int dx, int dy) {
         if (sheetOpen) {

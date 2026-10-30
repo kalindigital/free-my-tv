@@ -30,3 +30,6 @@
 - [x] Ajustes valem na hora para o protetor (as preferências são lidas entre processos; antes o protetor guardava a escolha antiga).
 - [x] Escolha do vídeo do protetor numa grade com a imagem de cada vídeo (`VideoPickerActivity`, imagens em `app/assets/aerial`).
 - [ ] Tempo ao vivo mais realista (céu pela hora do dia, sol no arco, nuvens em camadas, chuva/neve com profundidade, raios) — instalado, falta conferir na TV.
+- [x] Botão de favoritos (estrela) do controle abre a tela de bloqueio; o botão de desligar não chega a apps (o sistema trata antes).
+- [x] Tela de bloqueio: cartão "Tocando agora" (Spotify ou outro app) no topo à esquerda, com capa, progresso, controles pelo controle remoto, fundo desfocado, texto que rola e some após 3 min pausado.
+- [x] Tela de bloqueio: data e hora no topo à direita; tempo atual, máx./mín. e próximas horas embaixo à direita; margens iguais; sem deslocamento anti-queima e sem previsão de dias.

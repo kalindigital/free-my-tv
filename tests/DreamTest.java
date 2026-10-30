@@ -3,8 +3,6 @@ package io.freemytv;
 /** Plain-Java test for the screensaver's rules: sh tests/run.sh */
 public final class DreamTest {
     public static void main(String[] args) {
-        check(!InfoView.Turns.showDays(28_000_000L), "even minute: now and the next hours");
-        check(InfoView.Turns.showDays(28_000_001L), "odd minute: the next days");
         check(DreamPhotos.wide(1920, 1080), "16:9");
         check(DreamPhotos.wide(4000, 3000), "4:3");
         check(!DreamPhotos.wide(13000, 1486), "panorama is too wide");
@@ -17,10 +15,6 @@ public final class DreamTest {
         check(DreamBackground.Fluid.hue(10, -5, 4) == 350, "wraps below 0");
         check(DreamBackground.Fluid.hue(100, 2, 0) == 100, "starts where it was picked");
         check(DreamBackground.Fluid.hue(100, 2, 30) != DreamBackground.Fluid.hue(100, 2, 0), "changes with time");
-        for (long m = 0; m < 100; m++) {
-            int a = InfoView.Turns.shift(m), b = InfoView.Turns.shift(m + 1);
-            check(Math.abs(a) <= 2 && Math.abs(a - b) <= 1, "drift moves one step at a time, within 2: " + m);
-        }
         java.util.List<AerialVideos.Video> videos = java.util.Arrays.asList(
                 new AerialVideos.Video("a", "Dubai · dia", "http://x/a.mov"), new AerialVideos.Video("b", "China · noite", "http://x/b.mov"));
         check(AerialVideos.pick(videos, "b", "", new java.util.Random(1)).id.equals("b"), "the chosen video");
@@ -49,6 +43,31 @@ public final class DreamTest {
         check(WeatherScene.Rules.progress(rise, rise, set) == 0 && WeatherScene.Rules.progress(set, rise, set) == 1, "sun's arc");
         check(WeatherScene.Rules.cover(WeatherScene.CLEAR) < WeatherScene.Rules.cover(WeatherScene.CLOUDY)
                 && WeatherScene.Rules.cover(WeatherScene.CLOUDY) < WeatherScene.Rules.cover(WeatherScene.STORM), "greyer with clouds");
+        check(InfoView.Turns.musicControl(android.view.KeyEvent.KEYCODE_DPAD_LEFT) == 0, "◀ previous");
+        check(InfoView.Turns.musicControl(android.view.KeyEvent.KEYCODE_DPAD_CENTER) == 1, "OK play/pause");
+        check(InfoView.Turns.musicControl(android.view.KeyEvent.KEYCODE_MEDIA_NEXT) == 2, "⏭ next");
+        check(InfoView.Turns.musicControl(android.view.KeyEvent.KEYCODE_BACK) == -1, "Back still leaves");
+        check(NowPlaying.Format.time(187_000).equals("3:07") && NowPlaying.Format.time(3_723_000).equals("1:02:03"), "song times");
+        check(NowPlaying.Format.time(-5).equals("0:00"), "never negative");
+        int[] px = new int[25], tmp = new int[25];
+        java.util.Arrays.fill(px, 0xFF000000);
+        px[12] = 0xFFFFFFFF;    // one white dot in the middle of 5 × 5 black
+        Blur.box(px, tmp, 5, 5, 1, 1);
+        check((px[12] & 0xFF) > 0 && (px[12] & 0xFF) < 255, "the dot spreads out");
+        check((px[11] & 0xFF) > 0 && (px[7] & 0xFF) > 0, "into its neighbors");
+        check((px[0] & 0xFF) == 0 && px[0] >>> 24 == 0xFF, "far corner stays black and opaque");
+        int[] flat = new int[16], t2 = new int[16];
+        java.util.Arrays.fill(flat, 0xFF336699);
+        Blur.box(flat, t2, 4, 4, 2, 2);
+        check(flat[5] == 0xFF336699, "a flat color stays the same");
+        int[] last = {0xFF000000}, now = {0xFFFFFFFF};
+        Blur.mix(last, now, 0.5f);
+        check((now[0] & 0xFF) > 120 && (now[0] & 0xFF) < 136 && now[0] >>> 24 == 0xFF, "halfway between frames");
+        check(InfoView.Turns.marquee(5000, 100, 200, 80, 40) == 0, "fits: no scrolling");
+        check(InfoView.Turns.marquee(1000, 400, 200, 80, 40) == 0, "waits before scrolling");
+        check(InfoView.Turns.marquee(3500, 400, 200, 80, 40) == 40, "then moves 40 px a second");
+        long cycle = 2500 + (long) ((400 + 80) / 40f * 1000);
+        check(InfoView.Turns.marquee(cycle + 100, 400, 200, 80, 40) == 0, "and starts over");
         System.out.println("DreamTest OK");
     }
 

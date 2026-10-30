@@ -5,6 +5,7 @@ import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.text.TextPaint;
 import android.graphics.RectF;
 import android.text.TextUtils;
@@ -17,32 +18,52 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * The screensaver as an information board over its background ({@link DreamBackground}): the date at the top left with
- * the time under it, and at the bottom right the weather, which takes turns each minute between now with the next hours
- * and the next days. Redrawn once a minute, and the whole board moves a few pixels each minute so nothing stays burned
- * into the panel. The day's headlines are hidden for now ({@link #SHOW_NEWS}); with them on, the arrows pick one and OK
- * opens it ({@link Opener}).
+ * The screensaver as an information board over its background ({@link DreamBackground}): at the top right the date and
+ * the time, at the bottom right the weather now over the next hours, at the top left what's playing ({@link NowPlaying}).
+ * Redrawn once a minute. The day's headlines
+ * are hidden for now ({@link #SHOW_NEWS}); with them on, the arrows pick one and OK opens it ({@link Opener}).
  */
-final class InfoView extends View implements HomeData.Listener {
-    private static final float LEFT = 120, RIGHT = 1800;
+final class InfoView extends View implements HomeData.Listener, NowPlaying.Listener {
+    /**
+     * The same margin from all four edges (in 1920 × 1080 units): the date's capitals start this far from the top, the
+     * now-playing card too, and the lowest line of the weather ends this far from the bottom.
+     */
+    private static final float MARGIN = 96, LEFT = MARGIN, RIGHT = 1920 - MARGIN, BOTTOM = 1080 - MARGIN;
+    // The bottom right block, from the bottom margin up: the next hours' temperatures sit on it, their symbols and labels
+    // above; then today's high and low, and the temperature now. In 1920 × 1080 units above the bottom margin.
+    private static final float ROW_SYMBOL = 54, ROW_LABEL = 96, ROW_RANGE = 146, ROW_NOW = 196;
     /** What a key does on the board: nothing here (the system's), handled, or ends the screensaver. */
     static final int PASS = 0, HANDLED = 1, EXIT = 2;
     private static final long IDLE_MS = 30_000;
     /** The headlines at the bottom: off until something else is decided for that space. */
     static final boolean SHOW_NEWS = false;
-    private static final long ROW_FADE_MS = 900;
-    private boolean rowDays, rowDrawn;
-    private long switchAt;
 
     interface Opener { void open(Rss.Headline headline); }
 
     private final HomeData data;
     private final News news;
+    private final NowPlaying music;
+    // The "now playing" card, top left: its paints, the cover's shader (made when the cover changes) and the
+    // control the remote just pressed (lit for a moment).
+    private TextPaint musicTitle, musicArtist;
+    private Paint musicTime, glass, glassEdge, track, controlPaint;
+    private final Paint coverPaint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
+    private final android.graphics.Matrix coverMatrix = new android.graphics.Matrix();
+    private final android.graphics.Path shape = new android.graphics.Path();
+    private android.graphics.Bitmap coverShown;
+    private android.graphics.BitmapShader coverShader;
+    private int pressed = -1;   // 0 previous, 1 play/pause, 2 next
+    // The blurred background behind the card ({@link DreamBoard}), at 1/backdropScale of the screen.
+    private android.graphics.Bitmap backdrop;
+    private android.graphics.BitmapShader backdropShader;
+    private final Paint backdropPaint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
+    private final android.graphics.Matrix backdropMatrix = new android.graphics.Matrix();
+    private long pressedAt;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private boolean running;
     private int w, h;
     private float k = 1;
-    private Paint datePaint, clockPaint, tempPaint, rangePaint, smallPaint, smallDim, labelPaint, rule;
+    private Paint datePaint, clockPaint, tempPaint, smallPaint, smallDim, labelPaint, rule;
     private TextPaint headlinePaint, sourcePaint;
     private Paint pill, hintPaint;
     private final RectF row = new RectF();
@@ -60,7 +81,6 @@ final class InfoView extends View implements HomeData.Listener {
             if (SHOW_NEWS) news.refreshIfStale();
             invalidate();
             long now = System.currentTimeMillis();
-            drift(now / 60_000);
             handler.postDelayed(this, 60_000 - now % 60_000 + 50);
         }
     };
@@ -69,6 +89,26 @@ final class InfoView extends View implements HomeData.Listener {
         super(c);
         data = HomeData.get(c);
         news = News.get(c);
+        music = new NowPlaying(c, this);
+    }
+
+    @Override public void onNowPlaying() {
+        invalidate();
+    }
+
+    boolean musicShowing() { return music.showing(); }
+
+    /** The blurred background for the card's frosted glass (the same bitmap each time, its pixels refreshed). */
+    void setBackdrop(android.graphics.Bitmap b, int scale) {
+        if (b != backdrop) {
+            backdrop = b;
+            backdropShader = new android.graphics.BitmapShader(b, android.graphics.Shader.TileMode.CLAMP,
+                    android.graphics.Shader.TileMode.CLAMP);
+            backdropMatrix.setScale(scale, scale);
+            backdropShader.setLocalMatrix(backdropMatrix);
+            backdropPaint.setShader(backdropShader);
+        }
+        invalidate();
     }
 
     void start() {
@@ -76,6 +116,7 @@ final class InfoView extends View implements HomeData.Listener {
         running = true;
         data.addListener(this);
         news.addListener(this);
+        music.start();
         tick.run();
     }
 
@@ -89,6 +130,7 @@ final class InfoView extends View implements HomeData.Listener {
         handler.removeCallbacks(tick);
         data.removeListener(this);
         news.removeListener(this);
+        music.stop();
     }
 
     @Override public void onData() {
@@ -99,14 +141,14 @@ final class InfoView extends View implements HomeData.Listener {
         w = width;
         h = height;
         k = w / 1920f;
-        datePaint = Ui.text(Ui.thin, 46 * k, 0xE6FFFFFF);
+        datePaint = Ui.text(Ui.medium, 30 * k, 0xB3FFFFFF);
+        datePaint.setTextAlign(Paint.Align.RIGHT);
         datePaint.setShadowLayer(18 * k, 0, 2 * k, 0x66000000);
         clockPaint = Ui.numbers(Ui.semibold, 150 * k, 0xF2FFFFFF);
+        clockPaint.setTextAlign(Paint.Align.RIGHT);
         clockPaint.setShadowLayer(18 * k, 0, 2 * k, 0x66000000);
-        tempPaint = Ui.numbers(Ui.thin, 110 * k, 0xF2FFFFFF);
+        tempPaint = Ui.numbers(Ui.thin, 84 * k, 0xF2FFFFFF);
         tempPaint.setTextAlign(Paint.Align.RIGHT);
-        rangePaint = Ui.numbers(Ui.medium, 30 * k, 0xB3FFFFFF);
-        rangePaint.setTextAlign(Paint.Align.RIGHT);
         smallPaint = Ui.numbers(Ui.medium, 28 * k, 0xE6FFFFFF);
         smallPaint.setTextAlign(Paint.Align.CENTER);
         smallDim = Ui.numbers(Ui.regular, 26 * k, 0x80FFFFFF);
@@ -114,7 +156,7 @@ final class InfoView extends View implements HomeData.Listener {
         labelPaint = Ui.text(Ui.medium, 22 * k, 0x99FFFFFF);
         labelPaint.setLetterSpacing(0.12f);
         // Over a photo the weather needs the same soft shadow as the date and time.
-        for (Paint p : new Paint[] {tempPaint, rangePaint, smallPaint, smallDim, labelPaint}) {
+        for (Paint p : new Paint[] {tempPaint, smallPaint, smallDim, labelPaint}) {
             p.setShadowLayer(14 * k, 0, 2 * k, 0x66000000);
         }
         headlinePaint = new TextPaint(Ui.text(Ui.medium, 34 * k, 0xE6FFFFFF));
@@ -123,6 +165,17 @@ final class InfoView extends View implements HomeData.Listener {
         pill.setColor(0x29FFFFFF);
         hintPaint = Ui.text(Ui.medium, 22 * k, 0x66FFFFFF);
         hintPaint.setTextAlign(Paint.Align.RIGHT);
+        musicTitle = new TextPaint(Ui.text(Ui.semibold, 36 * k, 0xF2FFFFFF));
+        musicArtist = new TextPaint(Ui.text(Ui.regular, 28 * k, 0xB3FFFFFF));
+        musicTime = Ui.numbers(Ui.medium, 20 * k, 0x99FFFFFF);
+        glass = new Paint(Paint.ANTI_ALIAS_FLAG);
+        glass.setColor(0x38000000);
+        glassEdge = new Paint(Paint.ANTI_ALIAS_FLAG);
+        glassEdge.setStyle(Paint.Style.STROKE);
+        glassEdge.setStrokeWidth(Math.max(1, 1.5f * k));
+        glassEdge.setColor(0x26FFFFFF);
+        track = new Paint(Paint.ANTI_ALIAS_FLAG);
+        controlPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         rule = new Paint();
         rule.setColor(0x1FFFFFFF);
         rule.setStrokeWidth(Math.max(1, 1.5f * k));
@@ -135,77 +188,183 @@ final class InfoView extends View implements HomeData.Listener {
 
     private void draw(Canvas c, long now) {
         float left = LEFT * k, right = RIGHT * k;
-        String date = Ui.date(now);
-        if (!date.isEmpty()) date = Character.toUpperCase(date.charAt(0)) + date.substring(1);
-        c.drawText(date, left - Ui.leftBearing(datePaint, date), 140 * k, datePaint);
-        c.drawText(Ui.clock(now), left - Ui.leftBearing(clockPaint, Ui.clock(now)), 300 * k, clockPaint);
-
         HomeData.Weather wx = data.weather;
-        if (Prefs.weather() && !Double.isNaN(wx.temp)) {
-            drawToday(c, wx, right);
-            boolean days = Turns.showDays(now / 60_000) && !wx.days.isEmpty();
-            if (days != rowDays) {
-                // The first frame shows the row as it is; after that, each change fades.
-                switchAt = rowDrawn ? android.os.SystemClock.uptimeMillis() : 0;
-                rowDays = days;
-            }
-            rowDrawn = true;
-            float t = Math.min(1, (android.os.SystemClock.uptimeMillis() - switchAt) / (float) ROW_FADE_MS);
-            if (t < 1) {
-                drawRow(c, wx, right, !days, 1 - t);
-                postInvalidateOnAnimation();
-            }
-            drawRow(c, wx, right, days, t);
+        boolean weather = Prefs.weather() && !Double.isNaN(wx.temp);
+        drawClock(c, right, now);
+        if (weather) {
+            drawWeatherNow(c, wx, right);
+            drawHours(c, wx, right);
         }
         if (SHOW_NEWS) drawNews(c, left, right);
+        if (music.showing()) {
+            drawMusic(c, left);
+            postInvalidateDelayed(1000);    // the progress bar and the time move
+        }
     }
 
     /**
-     * Against burn-in the board keeps moving over a 5 × 5 grid of positions 6 px apart, one a minute. It glides to the
-     * next one over the whole minute (on the render thread, without redrawing), so it never visibly jumps.
+     * Top left, like the iPhone's lock screen: a dark glass card with the cover, the song and the artist, the
+     * progress with the times, and the controls (◀ previous, OK play/pause, ▶ next on the remote).
      */
-    private void drift(long minute) {
-        animate().translationX(Turns.shift(minute) * 6 * k).translationY(Turns.shift(minute / 5) * 6 * k)
-                .setDuration(58_000).setInterpolator(new android.view.animation.LinearInterpolator()).start();
+    private void drawMusic(Canvas c, float left) {
+        float top = MARGIN * k, h = 270 * k, w = 860 * k, r = 34 * k, pad = 24 * k;
+        row.set(left, top, left + w, top + h);
+        // Frosted glass: the background behind, blurred, then a light dark tint so the text reads.
+        if (backdropShader != null) c.drawRoundRect(row, r, r, backdropPaint);
+        c.drawRoundRect(row, r, r, glass);
+        c.drawRoundRect(row, r, r, glassEdge);
+        float art = h - 2 * pad, ax = left + pad, ay = top + pad;
+        android.graphics.Bitmap b = music.cover;
+        row.set(ax, ay, ax + art, ay + art);
+        if (b != null) {
+            if (b != coverShown) {
+                coverShown = b;
+                coverShader = new android.graphics.BitmapShader(b, android.graphics.Shader.TileMode.CLAMP,
+                        android.graphics.Shader.TileMode.CLAMP);
+            }
+            float scale = Math.max(art / b.getWidth(), art / b.getHeight());
+            coverMatrix.setScale(scale, scale);
+            coverMatrix.postTranslate(ax + (art - b.getWidth() * scale) / 2, ay + (art - b.getHeight() * scale) / 2);
+            coverShader.setLocalMatrix(coverMatrix);
+            coverPaint.setShader(coverShader);
+            c.drawRoundRect(row, 18 * k, 18 * k, coverPaint);
+        } else {
+            track.setColor(0x33FFFFFF);
+            c.drawRoundRect(row, 18 * k, 18 * k, track);
+            Symbols.draw(getContext(), c, "speaker", row.centerX(), row.centerY(), 60 * k, 0x99FFFFFF);
+        }
+
+        float tx = ax + art + 28 * k, tw = left + w - pad - tx;
+        boolean moving = drawScrolling(c, music.title, musicTitle, tx, tw, top + 74 * k, top + 30 * k, top + 86 * k);
+        moving |= drawScrolling(c, music.artist, musicArtist, tx, tw, top + 114 * k, top + 86 * k, top + 124 * k);
+        if (moving) postInvalidateDelayed(40);
+
+        // Progress: a thin bar with the time played and the time left.
+        long d = music.duration, p = music.positionNow();
+        float by = top + 150 * k, bh = 6 * k;
+        if (d > 0) {
+            track.setColor(0x40FFFFFF);
+            row.set(tx, by, tx + tw, by + bh);
+            c.drawRoundRect(row, bh / 2, bh / 2, track);
+            track.setColor(0xE6FFFFFF);
+            row.set(tx, by, tx + tw * Math.min(1, p / (float) d), by + bh);
+            c.drawRoundRect(row, bh / 2, bh / 2, track);
+            c.drawText(NowPlaying.Format.time(p), tx, by + 34 * k, musicTime);
+            String rest = "-" + NowPlaying.Format.time(d - p);
+            c.drawText(rest, tx + tw - musicTime.measureText(rest), by + 34 * k, musicTime);
+        }
+
+        // Controls, centered under the text.
+        float cy = top + h - 52 * k, cx = tx + tw / 2, gap = 120 * k;
+        boolean lit = SystemClock.uptimeMillis() - pressedAt < 350;
+        if (lit) postInvalidateDelayed(360);
+        for (int i = 0; i < 3; i++) {
+            float x = cx + (i - 1) * gap;
+            if (lit && pressed == i) {
+                controlPaint.setColor(0x33FFFFFF);
+                c.drawCircle(x, cy, 40 * k, controlPaint);
+            }
+            controlPaint.setColor(0xF2FFFFFF);
+            if (i == 1) drawPlayPause(c, x, cy, 22 * k, music.playing);
+            else drawSkip(c, x, cy, 16 * k, i == 2);
+        }
+    }
+
+    /** One line of the card: as it is if it fits, else scrolling slowly to the left (true while it scrolls). */
+    private boolean drawScrolling(Canvas c, String text, Paint p, float x, float width, float base, float clipTop, float clipBottom) {
+        float textW = p.measureText(text), gap = 80 * k;
+        float off = Turns.marquee(SystemClock.uptimeMillis(), textW, width, gap, 40 * k);
+        if (textW <= width) {
+            c.drawText(text, x, base, p);
+            return false;
+        }
+        c.save();
+        c.clipRect(x, clipTop, x + width, clipBottom);
+        c.drawText(text, x - off, base, p);
+        c.drawText(text, x - off + textW + gap, base, p);
+        c.restore();
+        return true;
+    }
+
+    private void drawPlayPause(Canvas c, float x, float y, float s, boolean playing) {
+        if (playing) {
+            row.set(x - s * 0.75f, y - s, x - s * 0.2f, y + s);
+            c.drawRoundRect(row, s * 0.12f, s * 0.12f, controlPaint);
+            row.set(x + s * 0.2f, y - s, x + s * 0.75f, y + s);
+            c.drawRoundRect(row, s * 0.12f, s * 0.12f, controlPaint);
+        } else {
+            shape.reset();
+            shape.moveTo(x - s * 0.6f, y - s);
+            shape.lineTo(x + s, y);
+            shape.lineTo(x - s * 0.6f, y + s);
+            shape.close();
+            c.drawPath(shape, controlPaint);
+        }
+    }
+
+    /** ◀◀ or ▶▶: two triangles. */
+    private void drawSkip(Canvas c, float x, float y, float s, boolean forward) {
+        float dir = forward ? 1 : -1;
+        shape.reset();
+        for (int i = 0; i < 2; i++) {
+            float bx = x + dir * (i == 0 ? -s : 0);
+            shape.moveTo(bx, y - s);
+            shape.lineTo(bx + dir * s, y);
+            shape.lineTo(bx, y + s);
+            shape.close();
+        }
+        c.drawPath(shape, controlPaint);
     }
 
     /** The weather block's turns (apart from the view, so the plain-Java tests can load it without Android). */
     static final class Turns {
-        /** Now and the next hours one minute, the next days the next. */
-        static boolean showDays(long minute) { return minute % 2 == 1; }
-
-        /** The board's step on one axis: -2 to 2, back and forth (0 1 2 1 0 -1 -2 -1 …), so each move is one step. */
-        static int shift(long step) {
-            int[] path = {0, 1, 2, 1, 0, -1, -2, -1};
-            return path[(int) (step % path.length)];
+        /**
+         * How far a line that doesn't fit has scrolled at `ms`: still for 2.5 s, then moving left at `speed` px a second
+         * until its copy (`gap` behind it) is where it started, and again. 0 when it fits.
+         */
+        static float marquee(long ms, float textW, float boxW, float gap, float speed) {
+            if (textW <= boxW || speed <= 0) return 0;
+            long pause = 2500, travel = (long) ((textW + gap) / speed * 1000), t = ms % (pause + travel);
+            return t < pause ? 0 : (t - pause) * speed / 1000f;
         }
+
+        /** With a song showing: ◀ and ⏮ previous (0), OK and ⏯ play/pause (1), ▶ and ⏭ next (2); -1 for the rest. */
+        static int musicControl(int code) {
+            switch (code) {
+                case KeyEvent.KEYCODE_DPAD_LEFT: case KeyEvent.KEYCODE_MEDIA_PREVIOUS: return 0;
+                case KeyEvent.KEYCODE_DPAD_CENTER: case KeyEvent.KEYCODE_ENTER: case KeyEvent.KEYCODE_NUMPAD_ENTER:
+                case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE: case KeyEvent.KEYCODE_MEDIA_PLAY: case KeyEvent.KEYCODE_MEDIA_PAUSE:
+                    return 1;
+                case KeyEvent.KEYCODE_DPAD_RIGHT: case KeyEvent.KEYCODE_MEDIA_NEXT: return 2;
+                default: return -1;
+            }
+        }
+
     }
 
-    /** Bottom right: symbol and temperature now, the city, high and low (always there; the row under it takes turns). */
-    private void drawToday(Canvas c, HomeData.Weather wx, float right) {
+    /** Top right, level with the now-playing card: the day of the week and the date, and under it the time, big. */
+    private void drawClock(Canvas c, float right, long now) {
+        String date = Ui.date(now);
+        if (!date.isEmpty()) date = Character.toUpperCase(date.charAt(0)) + date.substring(1);
+        float dateBase = MARGIN * k + Ui.cap(datePaint);
+        c.drawText(date, right, dateBase, datePaint);
+        c.drawText(Ui.clock(now), right, dateBase + 30 * k + Ui.cap(clockPaint), clockPaint);
+    }
+
+    /** Bottom right, over the next hours: the weather symbol and the temperature now, and under them today's high and low. */
+    private void drawWeatherNow(Canvas c, HomeData.Weather wx, float right) {
+        float base = (BOTTOM - ROW_NOW) * k, cap = Ui.cap(tempPaint);
         String temp = HomeData.degrees(wx.temp);
-        float base = 742 * k;
         c.drawText(temp, right, base, tempPaint);
         String symbol = Symbols.weather(wx.code, wx.isDay);
-        float size = 76 * k, sw = Symbols.width(getContext(), symbol, size);
-        Symbols.draw(getContext(), c, symbol, right - tempPaint.measureText(temp) - 24 * k - sw / 2,
-                base - Ui.cap(tempPaint) / 2, size, 0xE6FFFFFF);
+        float sw = Symbols.width(getContext(), symbol, cap);
+        Symbols.draw(getContext(), c, symbol, right - tempPaint.measureText(temp) - 24 * k - sw / 2, base - cap / 2, cap, 0xE6FFFFFF);
         String range = Ui.tr("Máx. ", "H: ", "Máx. ") + HomeData.degrees(wx.max) + "   "
                 + Ui.tr("Mín. ", "L: ", "Mín. ") + HomeData.degrees(wx.min);
-        String place = Prefs.city().isEmpty() ? range : Prefs.city() + "  ·  " + range;
-        c.drawText(place, right, 792 * k, rangePaint);
+        c.drawText(range, right, (BOTTOM - ROW_RANGE) * k, datePaint);
     }
 
-    /** The row under the temperature (the next days or the next hours) at `alpha`, for the fade between them. */
-    private void drawRow(Canvas c, HomeData.Weather wx, float right, boolean days, float alpha) {
-        if (alpha <= 0.01f) return;
-        boolean faded = alpha < 0.99f;
-        if (faded) c.saveLayerAlpha(right - 1000 * k, 820 * k, right + 60 * k, 1050 * k, Math.round(255 * alpha));
-        if (days) drawWeek(c, wx, right); else drawHours(c, wx, right);
-        if (faded) c.restore();
-    }
-
-    /** Under the temperature: the next hours. */
+    /** At the bottom right, under the time: the next hours (the temperatures end on the bottom margin). */
     private void drawHours(Canvas c, HomeData.Weather wx, float right) {
         int n = Math.min(6, wx.hours.size());
         SimpleDateFormat hour = Ui.en ? new SimpleDateFormat("h a", Locale.US) : new SimpleDateFormat("H'h'", Ui.locale());
@@ -216,35 +375,11 @@ final class InfoView extends View implements HomeData.Listener {
         float col = 112 * k, x0 = right - last / 2 - col * (n - 1);
         for (int i = 0; i < n; i++) {
             float cx = x0 + i * col;
-            c.drawText(hour.format(new Date(wx.hours.get(i))), cx, 880 * k, smallDim);
-            Symbols.draw(getContext(), c, Symbols.weather(wx.hourCode.get(i), wx.hourDay.get(i)), cx, 922 * k, 32 * k, 0xCCFFFFFF);
-            c.drawText(HomeData.degrees(wx.hourTemp.get(i)), cx, 976 * k, smallPaint);
+            c.drawText(hour.format(new Date(wx.hours.get(i))), cx, (BOTTOM - ROW_LABEL) * k, smallDim);
+            Symbols.draw(getContext(), c, Symbols.weather(wx.hourCode.get(i), wx.hourDay.get(i)), cx,
+                    (BOTTOM - ROW_SYMBOL) * k, 32 * k, 0xCCFFFFFF);
+            c.drawText(HomeData.degrees(wx.hourTemp.get(i)), cx, BOTTOM * k, smallPaint);
         }
-    }
-
-    /**
-     * Under the temperature, in place of the hours: the next days. Each day is one narrow column (the day, the symbol,
-     * the high and, under it and dimmer, the low), so the days read apart instead of as one run of numbers.
-     */
-    private void drawWeek(Canvas c, HomeData.Weather wx, float right) {
-        int n = Math.min(7, wx.days.size());
-        SimpleDateFormat day = new SimpleDateFormat("EEE", Ui.locale());
-        float last = Math.max(smallDim.measureText(weekday(day, wx.days.get(n - 1))),
-                smallPaint.measureText(HomeData.degrees(wx.dayMax.get(n - 1))));
-        float col = 112 * k, x0 = right - last / 2 - col * (n - 1);
-        for (int i = 0; i < n; i++) {
-            float cx = x0 + col * i;
-            String name = i == 0 ? Ui.tr("Hoje", "Today", "Hoy") : weekday(day, wx.days.get(i));
-            c.drawText(name, cx, 880 * k, smallDim);
-            Symbols.draw(getContext(), c, Symbols.weather(wx.dayCode.get(i), true), cx, 922 * k, 32 * k, 0xCCFFFFFF);
-            c.drawText(HomeData.degrees(wx.dayMax.get(i)), cx, 976 * k, smallPaint);
-            c.drawText(HomeData.degrees(wx.dayMin.get(i)), cx, 1014 * k, smallDim);
-        }
-    }
-
-    private static String weekday(SimpleDateFormat f, long at) {
-        String s = f.format(new Date(at)).replace(".", "");
-        return s.isEmpty() ? s : Character.toUpperCase(s.charAt(0)) + s.substring(1);
     }
 
     /** Bottom: the day's headlines, one line each, with the source. */
@@ -279,6 +414,20 @@ final class InfoView extends View implements HomeData.Listener {
             case KeyEvent.KEYCODE_VOLUME_UP: case KeyEvent.KEYCODE_VOLUME_DOWN: case KeyEvent.KEYCODE_VOLUME_MUTE:
             case KeyEvent.KEYCODE_POWER: case KeyEvent.KEYCODE_SLEEP:
                 return PASS;
+            default:
+                break;
+        }
+        int control = Turns.musicControl(code);
+        if (control >= 0 && music.showing()) {
+            if (down && e.getRepeatCount() == 0) {
+                if (control == 0) music.previous(); else if (control == 2) music.next(); else music.playPause();
+                pressed = control;
+                pressedAt = SystemClock.uptimeMillis();
+                invalidate();
+            }
+            return HANDLED;
+        }
+        switch (code) {
             case KeyEvent.KEYCODE_DPAD_UP: case KeyEvent.KEYCODE_DPAD_DOWN:
             case KeyEvent.KEYCODE_DPAD_LEFT: case KeyEvent.KEYCODE_DPAD_RIGHT:
             case KeyEvent.KEYCODE_DPAD_CENTER: case KeyEvent.KEYCODE_ENTER: case KeyEvent.KEYCODE_NUMPAD_ENTER:

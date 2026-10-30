@@ -26,6 +26,27 @@ final class DreamBoard extends FrameLayout {
     private final Handler main = new Handler(Looper.getMainLooper());
     private TextureView video;
     private MediaPlayer player;
+    private boolean videoShowing;
+    // The background behind the now-playing card, at 1/8 size and blurred, for its frosted glass (refreshed twice a
+    // second while the card is up: the background moves).
+    private static final int SNAP_SCALE = 8;
+    // Two bitmaps in turn: the card draws one while the next is made in the other (changing the one on screen made it
+    // flicker). Each new capture is mixed with the last, so a black video frame or a sudden change never shows.
+    private final android.graphics.Bitmap[] snaps = new android.graphics.Bitmap[2];
+    private int snapTurn;
+    private android.graphics.Bitmap grab;
+    private android.graphics.Canvas grabCanvas;
+    private int[] snapPixels, snapTmp, snapLast;
+    private boolean snapFirst = true;
+    private final Runnable frost = new Runnable() {
+        @Override public void run() {
+            if (!running) return;
+            if (board.musicShowing()) {
+                board.setBackdrop(snapshot(), SNAP_SCALE);
+            }
+            main.postDelayed(this, 500);
+        }
+    };
     private boolean running;
 
     DreamBoard(Context c) {
@@ -46,10 +67,41 @@ final class DreamBoard extends FrameLayout {
         background.start();
         board.start();
         if (DreamBackground.VIDEO.equals(Prefs.dreamBackground())) startVideo();
+        main.post(frost);
+    }
+
+    /** What's behind the board right now, small and blurred: the video's frame (if one plays) with the background over it. */
+    private android.graphics.Bitmap snapshot() {
+        int w = Math.max(1, getWidth() / SNAP_SCALE), h = Math.max(1, getHeight() / SNAP_SCALE);
+        if (grab == null || grab.getWidth() != w || grab.getHeight() != h) {
+            grab = android.graphics.Bitmap.createBitmap(w, h, android.graphics.Bitmap.Config.ARGB_8888);
+            grabCanvas = new android.graphics.Canvas(grab);
+            for (int i = 0; i < 2; i++) snaps[i] = android.graphics.Bitmap.createBitmap(w, h, android.graphics.Bitmap.Config.ARGB_8888);
+            snapPixels = new int[w * h];
+            snapTmp = new int[w * h];
+            snapLast = new int[w * h];
+            snapFirst = true;
+        }
+        grabCanvas.drawColor(0xFF000000);
+        if (video != null && videoShowing) video.getBitmap(grab);
+        grabCanvas.save();
+        grabCanvas.scale(1f / SNAP_SCALE, 1f / SNAP_SCALE);
+        background.draw(grabCanvas);
+        grabCanvas.restore();
+        grab.getPixels(snapPixels, 0, w, 0, 0, w, h);
+        Blur.box(snapPixels, snapTmp, w, h, 3, 2);
+        if (!snapFirst) Blur.mix(snapLast, snapPixels, 0.35f);
+        snapFirst = false;
+        System.arraycopy(snapPixels, 0, snapLast, 0, snapPixels.length);
+        snapTurn = 1 - snapTurn;
+        snaps[snapTurn].setPixels(snapPixels, 0, w, 0, 0, w, h);
+        return snaps[snapTurn];
     }
 
     void stop() {
         running = false;
+        main.removeCallbacks(frost);
+        videoShowing = false;
         article.close();
         board.stop();
         background.stop();
@@ -93,7 +145,10 @@ final class DreamBoard extends FrameLayout {
                     player.setVolume(0, 0);
                     player.setOnPreparedListener(MediaPlayer::start);
                     player.setOnInfoListener((mp, what, extra) -> {
-                        if (what == MediaPlayer.MEDIA_INFO_VIDEO_RENDERING_START) background.videoShowing();
+                        if (what == MediaPlayer.MEDIA_INFO_VIDEO_RENDERING_START) {
+                            videoShowing = true;
+                            background.videoShowing();
+                        }
                         return false;
                     });
                     player.setOnErrorListener((mp, what, extra) -> {
