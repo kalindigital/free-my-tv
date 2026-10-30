@@ -28,8 +28,11 @@ final class Prefs {
         Ui.applyLanguage();   // the language picked on the TV, now that it can be read
     }
 
+    @SuppressWarnings("deprecation")
     private static SharedPreferences sp() {
-        return app.getSharedPreferences("settings", Context.MODE_PRIVATE);
+        // Settings and the home screen run in :home, the screensaver (Android 11) in the main process: without this, a
+        // process keeps the values it read first and never sees a change made in the other one.
+        return app.getSharedPreferences("settings", Context.MODE_PRIVATE | Context.MODE_MULTI_PROCESS);
     }
 
     private static void put(String key, String value) {
@@ -81,6 +84,15 @@ final class Prefs {
 
     static boolean weather() { return sp().getBoolean("weather", true); }
     static void setWeather(boolean on) { put("weather", on); }
+
+    /** The screensaver's background: "fluid" (default), "landscape", "space", "video" or "weather" ({@link DreamBackground}). */
+    static String dreamBackground() { return sp().getString("dream_background", DreamBackground.FLUID); }
+    static void setDreamBackground(String v) { put("dream_background", v); }
+    /** The aerial video: {@link AerialVideos#RANDOM} (a new one each time) or a video's id; and the last one shown. */
+    static String dreamVideo() { return sp().getString("dream_video", AerialVideos.RANDOM); }
+    static void setDreamVideo(String id) { put("dream_video", id); }
+    static String lastVideo() { return sp().getString("last_video", ""); }
+    static void setLastVideo(String id) { put("last_video", id); }
 
     static boolean quotes() { return sp().getBoolean("quotes", Config.SHOW_CRYPTO); }
     static void setQuotes(boolean on) { put("quotes", on); }

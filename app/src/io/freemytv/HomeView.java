@@ -44,8 +44,8 @@ import java.util.function.Consumer;
 /**
  * The home screen, styled after the Apple TV app with the macOS 27 glass:
  *  - at the top left, the "For You" title and the tabs (Explore, Movies, Shows); at the top right, icon-only glass
- *    buttons (Live TV, HDMI Inputs, Settings), with the focused one's name below it, and the small crypto quotes
- *    (logo + price) at the right end of the tab row;
+ *    buttons (Live TV, HDMI Inputs, Settings), with the focused one's name below it, and the network and time
+ *    at the right end of the tab row;
  *  - three cards with the titles recommended for right now in the selected tab (Recs, from TMDB); the background is
  *    the first card's photo, heavily blurred and almost white (Backdrop); without one, a light gradient;
  *  - at the bottom, the glass shelf with the apps (icons in each brand's color, like the tvOS Dock; the focused one
@@ -277,7 +277,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private long clockMinute = -1;
     private boolean okDown, backDown;
 
-    private Paint labelPaint, metaPaint, clockPaint, buttonPaint, capsuleText, tipPaint, quotePaint, staleQuote;
+    private Paint labelPaint, metaPaint, clockPaint, buttonPaint, capsuleText, tipPaint, quotePaint;
     private Paint rowTitle, drawerLabel, cardTitle, cardText, cardDim, cardDimRight, bigTemp, hourPaint, hourTemp;
     private Paint pricePaint, changePaint, sheetTitle;
     private TextPaint titlePaint, gridLabel, toastPaint;
@@ -358,6 +358,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             esthetis.refreshIfStale();
             board.refreshIfStale();
             if (!greeting().equals(greetingShown)) heroDirty = true;   // morning, afternoon, evening
+            updateStatus();
             checkNotices();
             updatePalette();
             checkNight(true);
@@ -438,6 +439,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         recs.refreshIfStale();
         cinemora.refreshIfStale();
         if (tvInputs != null) tvInputs.registerCallback(inputCallback, handler);
+        updateStatus();
         handler.postDelayed(tick, 15_000);
         checkNotices();
         reload();
@@ -721,8 +723,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         // Quotes: a subtle detail, smaller and dimmer than the rest.
         quotePaint = Ui.numbers(Ui.regular, 21 * k, 0xB8FFFFFF);
         quotePaint.setShadowLayer(14 * k, 0, 1 * k, 0x99000000);
-        staleQuote = Ui.text(Ui.medium, 21 * k, 0x99FFFFFF);
-        staleQuote.setTextAlign(Paint.Align.RIGHT);
         rowTitle = Ui.text(Ui.semibold, 25 * k, 0xB3FFFFFF);
         drawerLabel = Ui.text(Ui.medium, 23 * k, 0xEBFFFFFF);
         drawerLabel.setTextAlign(Paint.Align.CENTER);
@@ -1060,7 +1060,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         lCardMeta.setColor(tone(L_DIM, 0xFF98989D));
         lQuote.setColor(tone(L_FAINT, 0xB8FFFFFF));
         lTip.setColor(tone(L_INK, WHITE));
-        staleQuote.setColor(tone(L_FAINT, 0x99FFFFFF));
     }
 
     private boolean tickBackgroundFade(long up) {
@@ -1254,77 +1253,50 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 tone(30, 34) * k, tone(22, 28) * k, tone(0.65f, 0.95f), 1);
     }
 
-    /** The quotes row's text and sizes, for one set of coins, prices and text size. */
-    private final class Quotes {
-        final int[] coins;
-        final double[] prices;
-        final float size, cap, halfCap;
-        final String[] values;
-        final float[] glyphs, widths;
+    private String netShown = "", clockShown = "";
+    private float statusSize, netW, clockW;   // measured when the text changes, not on every frame
 
-        Quotes(int[] coins, double[] all, Paint text) {
-            this.coins = coins;
-            size = text.getTextSize();
-            cap = Ui.cap(text);
-            halfCap = Ui.halfCap(text);
-            int n = coins.length;
-            prices = new double[n];
-            values = new String[n];
-            glyphs = new float[n];
-            widths = new float[n];
-            for (int i = 0; i < n; i++) {
-                prices[i] = all[coins[i]];
-                values[i] = HomeData.compact(prices[i]);
-                glyphs[i] = Glyphs.width(getContext(), HomeData.COINS[coins[i]], cap);
-                widths[i] = text.measureText(values[i]);
-            }
-        }
-
-        boolean matches(int[] now, double[] all, float textSize) {
-            if (now != coins || textSize != size) return false;
-            for (int i = 0; i < coins.length; i++) if (Double.compare(all[coins[i]], prices[i]) != 0) return false;
-            return true;
-        }
+    /** The network the TV is on and the time, for the row at the right of the tabs; redraws when either changes. */
+    private void updateStatus() {
+        String net = Network.name(getContext());
+        String clock = android.text.format.DateFormat.getTimeFormat(getContext()).format(new java.util.Date());
+        if (net.equals(netShown) && clock.equals(clockShown)) return;
+        netShown = net;
+        clockShown = clock;
+        statusSize = 0;
+        heroDirty = true;
+        invalidate();
     }
 
-    private Quotes quotes;
-
-    /** Coin logo + price in the configured currency, in a row at the right end of the tab bar. */
-    private void drawQuotes(Canvas c) {
+    /** Wi-Fi (or cable) name and the time, in a row at the right end of the tab bar. */
+    private void drawStatus(Canvas c) {
         float right = platterRect.isEmpty() ? CONTENT_R * k : platterRect.right - SHELF_PAD * k;
         applyTone();
         Paint text = lQuote;
-        // The corner buttons' names appear in this row: the quotes fade out while one of them has focus.
+        // The corner buttons' names appear in this row: it fades out while one of them has focus.
         float fade = 1;
         for (int i = NT; i < NT + 3; i++) fade = Math.min(fade, 1 - Ui.clamp(topFocus[i].value));
-        if (fade <= 0.01f) return;
+        if (fade <= 0.01f || clockShown.isEmpty()) return;
         int textColor = text.getColor();
         text.setColor(Ui.alpha(textColor, fade));
-        int n = HomeData.coinCount();
-        if (n == 0) { text.setColor(textColor); return; }
-        // Measured once per set of prices: this row is redrawn on every frame of the cards' focus animation, and
-        // measuring text there cost ~3 ms a frame on a Mi Box 3.
-        int[] coins = HomeData.active();
-        Quotes q = quotes;
-        if (q == null || !q.matches(coins, data.prices, text.getTextSize())) {
-            q = quotes = new Quotes(coins, data.prices, text);
+        int icon = Ui.alpha(tone(0xB38E8E93, 0x8CFFFFFF), fade);
+        float cap = Ui.cap(text), base = (L_TABBAR_TOP + L_TABBAR_H / 2) * k + Ui.halfCap(text);
+        float gap = 8 * k, spacing = 28 * k;
+        float wifi = Symbols.width(getContext(), "wifi", cap * 1.6f), clock = Symbols.width(getContext(), "schedule", cap * 1.6f);
+        if (statusSize != text.getTextSize()) {
+            statusSize = text.getTextSize();
+            netW = text.measureText(netShown);
+            clockW = text.measureText(clockShown);
         }
-        // On the tab row, at the right.
-        float base = (L_TABBAR_TOP + L_TABBAR_H / 2) * k + q.halfCap;
-        float cap = q.cap, gap = 6 * k, spacing = 24 * k;
-        float total = spacing * (n - 1);
-        for (int i = 0; i < n; i++) total += q.glyphs[i] + gap + q.widths[i];
-        float x = right - total;
-        for (int i = 0; i < n; i++) {
-            Glyphs.coin(getContext(), c, HomeData.COINS[coins[i]], x + q.glyphs[i] / 2, base - cap / 2, cap,
-                    Ui.alpha(tone(0xB38E8E93, 0x8CFFFFFF), fade));
-            x += q.glyphs[i] + gap;
-            c.drawText(q.values[i], x, base, text);
-            x += q.widths[i] + spacing;
-        }
+        float x = right - (wifi + gap + netW + spacing + clock + gap + clockW);
+        Symbols.draw(getContext(), c, "wifi", x + wifi / 2, base - cap / 2, cap * 1.6f, icon);
+        x += wifi + gap;
+        c.drawText(netShown, x, base, text);
+        x += netW + spacing;
+        Symbols.draw(getContext(), c, "schedule", x + clock / 2, base - cap / 2, cap * 1.6f, icon);
+        x += clock + gap;
+        c.drawText(clockShown, x, base, text);
         text.setColor(textColor);
-        String stale = HomeData.staleness(data.pricesAt, 5 * 60_000L);
-        if (!stale.isEmpty()) c.drawText(stale, right - total - 24 * k, base, staleQuote);
     }
 
     private void drawTiles(Canvas c) {
@@ -2006,15 +1978,29 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
     }
 
+    private long lastBack;
+
     private void back() {
+        // On Home, two Backs in a row (within 1.5 s) open the screensaver.
+        if (tab == 0 && !sheetOpen && zone != Z_DRAWER) {
+            long now = android.os.SystemClock.uptimeMillis();
+            if (now - lastBack < 1_500) {
+                lastBack = 0;
+                RemoteKeys.openScreensaver(activity);
+                return;
+            }
+            lastBack = now;
+        }
         if (sheetOpen) {
             closeSheet();
         } else if (zone == Z_DRAWER) {
             closeDrawer();
             retarget(false);
-        } else if (tab != 0 && zone != Z_TOP) {
+        } else if (tab != 0) {
+            // Back from any other tab goes straight to Home, with the focus on its tab.
+            selectTab(0);
             zone = Z_TOP;
-            topIndex = tab;
+            topIndex = 0;
             heroDirty = true;
             retarget(false);
         } else if (zone != Z_SHELF && tab == 0) {
@@ -2026,6 +2012,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
         click.move();
     }
+
 
     private void move(int dx, int dy) {
         if (sheetOpen) {
@@ -2534,7 +2521,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             for (int i = 0; i < 3; i++) if (i != top) drawLightCard(c, i);
             if (top >= 0) drawLightCard(c, top);
         }
-        if (HomeData.coinCount() > 0) drawQuotes(c);
+        drawStatus(c);
     }
 
     /**

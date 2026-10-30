@@ -87,6 +87,14 @@ final class Spanish {
             case "Light": return "Claro";
             case "Dark": return "Oscuro";
             case "Weather widget": return "Widget del clima";
+            case "Screensaver background": return "Fondo del salvapantallas";
+            case "Landscape": return "Paisaje";
+            case "Space": return "Espacio";
+            case "Fluid colors": return "Colores fluidos";
+            case "Aerial video": return "Video aéreo";
+            case "Live weather": return "Clima en vivo";
+            case "Random": return "Aleatorio";
+            case "Screensaver video": return "Video del salvapantallas";
             case "Quotes widget": return "Widget de cotizaciones";
             case "On": return "Activado";
             case "Off": return "Desactivado";

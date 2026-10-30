@@ -603,8 +603,30 @@ public class SettingsActivity extends Activity {
         // MARK: - Home Settings and Remote Buttons
 
         private static final String[] LANGUAGES = {"auto", "pt", "en", "es"}, UNITS = {"auto", "C", "F"}, THEMES = {"auto", "light", "dark"};
-        /** Home Settings: language, temperature, theme, weather, quotes, then one row per coin. */
-        private static final int COIN_ROWS = 5;
+        private static final String[] DREAM_BACKGROUNDS = {DreamBackground.FLUID, DreamPhotos.LANDSCAPE, DreamPhotos.SPACE,
+                DreamBackground.VIDEO, DreamBackground.WEATHER};
+        /**
+         * Home Settings: language, temperature, theme, weather, quotes, screensaver background, screensaver video, then
+         * one row per coin.
+         */
+        private static final int COIN_ROWS = 7;
+        /** The aerial videos for the "Screensaver video" row (loaded when Home Settings opens). */
+        private List<AerialVideos.Video> videos = new ArrayList<>();
+
+        private void loadVideos() {
+            videos = AerialVideos.saved(getContext());
+            final Context c = getContext();
+            new Thread(() -> {
+                List<AerialVideos.Video> fresh = AerialVideos.refresh(c);
+                post(() -> { videos = fresh; invalidate(); });
+            }, "aerial-list").start();
+        }
+
+        private String videoName(String id) {
+            if (AerialVideos.RANDOM.equals(id)) return Ui.tr("Aleatório", "Random");
+            for (AerialVideos.Video v : videos) if (v.id.equals(id)) return v.name;
+            return Ui.tr("Aleatório", "Random");
+        }
 
         private boolean dollar() {
             return "BRL".equalsIgnoreCase(Config.CURRENCY.trim());
@@ -617,6 +639,8 @@ public class SettingsActivity extends Activity {
             l.add(Ui.tr("Tema", "Theme"));
             l.add(Ui.tr("Widget do clima", "Weather widget"));
             l.add(Ui.tr("Widget de cotações", "Quotes widget"));
+            l.add(Ui.tr("Fundo da tela de descanso", "Screensaver background"));
+            l.add(Ui.tr("Vídeo da tela de descanso", "Screensaver video"));
             l.add("Bitcoin");
             l.add("Ethereum");
             l.add("Solana");
@@ -635,6 +659,12 @@ public class SettingsActivity extends Activity {
             v[2] = theme.equals("light") ? Ui.tr("Claro", "Light") : theme.equals("dark") ? Ui.tr("Escuro", "Dark") : Ui.tr("Automático", "Automatic");
             v[3] = onOff(Prefs.weather());
             v[4] = onOff(Prefs.quotes());
+            String bg = Prefs.dreamBackground();
+            v[5] = bg.equals(DreamPhotos.LANDSCAPE) ? Ui.tr("Paisagem", "Landscape")
+                    : bg.equals(DreamPhotos.SPACE) ? Ui.tr("Espaço", "Space")
+                    : bg.equals(DreamBackground.VIDEO) ? Ui.tr("Vídeo aéreo", "Aerial video")
+                    : bg.equals(DreamBackground.WEATHER) ? Ui.tr("Tempo ao vivo", "Live weather") : Ui.tr("Cores fluidas", "Fluid colors");
+            v[6] = videoName(Prefs.dreamVideo());
             // No quotes widget, nowhere to show prices: the coins read as off (and stay locked) until it is back on.
             for (int i = COIN_ROWS; i < v.length; i++) v[i] = onOff(Prefs.quotes() && Prefs.coin(i - COIN_ROWS));
             return v;
@@ -707,6 +737,20 @@ public class SettingsActivity extends Activity {
                 }
                 case 3: Prefs.setWeather(!Prefs.weather()); break;
                 case 4: Prefs.setQuotes(!Prefs.quotes()); break;
+                case 5: {
+                    int at = java.util.Arrays.asList(DREAM_BACKGROUNDS).indexOf(Prefs.dreamBackground());
+                    Prefs.setDreamBackground(DREAM_BACKGROUNDS[(at + dir + DREAM_BACKGROUNDS.length) % DREAM_BACKGROUNDS.length]);
+                    return;     // nothing on the home screen changes
+                }
+                case 6: {
+                    // "Random", then each video in Apple's order.
+                    List<String> ids = new ArrayList<>();
+                    ids.add(AerialVideos.RANDOM);
+                    for (AerialVideos.Video v : videos) ids.add(v.id);
+                    int at = Math.max(0, ids.indexOf(Prefs.dreamVideo()));
+                    Prefs.setDreamVideo(ids.get((at + dir + ids.size()) % ids.size()));
+                    return;
+                }
                 default:
                     if (!Prefs.quotes()) return;
                     Prefs.setCoin(focus - COIN_ROWS, !Prefs.coin(focus - COIN_ROWS));
@@ -888,6 +932,11 @@ public class SettingsActivity extends Activity {
             } else if (screen == REMOTE_KEYS) {
                 openPicker(focus + 1);
             } else if (screen == HOME_SETTINGS) {
+                if (focus == 6) {
+                    // The screensaver video: OK opens the grid with each video's picture (the arrows still step).
+                    getContext().startActivity(new Intent(getContext(), VideoPickerActivity.class));
+                    return;
+                }
                 adjust(1);
                 invalidate();
                 return;
@@ -901,6 +950,7 @@ public class SettingsActivity extends Activity {
             } else if (focus == 2) {
                 screen = HOME_SETTINGS;
                 focus = 0;
+                loadVideos();
             } else if (focus == 3) {
                 openShelfEditor();
             } else if (focus == 4) {

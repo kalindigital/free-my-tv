@@ -29,6 +29,9 @@ final class Cinemora {
     static final String MOVIE = "movie", SERIES = "series";
     private static final Uri BASE = Uri.parse("content://" + PKG + ".launcher");
     private static final long EVERY = 10 * 60_000L;
+    // An empty answer is usually passing (Cinemora's process frozen or still starting, its catalog being rewritten),
+    // so ask again soon instead of showing the TMDB picks for the next ten minutes.
+    private static final long RETRY_EMPTY = 30_000L;
 
     static final class Item {
         final String kind, id, title, year, rating;
@@ -135,7 +138,7 @@ final class Cinemora {
 
     void refreshIfStale() {
         long now = System.currentTimeMillis();
-        if (fetching || (now - fetchedAt < EVERY && now >= fetchedAt)) return;
+        if (fetching || !Refresh.isStale(now, fetchedAt, movies.isEmpty() && series.isEmpty())) return;
         fetching = true;
         rowsIo.execute(() -> {
             try {
@@ -148,6 +151,14 @@ final class Cinemora {
                 fetching = false;
             }
         });
+    }
+
+    /** When to ask Cinemora again (apart from the class, so the plain-Java tests can load it without Android). */
+    static final class Refresh {
+        /** Every ten minutes, or after 30 s while Cinemora has given us nothing. */
+        static boolean isStale(long now, long fetchedAt, boolean empty) {
+            return now < fetchedAt || now - fetchedAt >= (empty ? RETRY_EMPTY : EVERY);
+        }
     }
 
     private List<Row> query(String kind) {

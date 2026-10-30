@@ -13,12 +13,28 @@ import android.view.KeyEvent;
  * reaches an app's window; only the accessibility service's key filter (RemoteKeyService) sees it.
  * The dashboard button (the gear) asks the system UI for TOGGLE_NOTIFICATION_HANDLER_PANEL, which it only sends to
  * system apps (Google TV's home screen, off in Free My TV mode): we open our own panel (PanelActivity) instead.
+ * The favorites button (the star) "locks" the TV: it opens the screensaver. The power button can't do that: the system
+ * handles it before any app sees it.
  */
 final class RemoteKeys {
     private RemoteKeys() {}
 
     /** TCL's dashboard (gear) button. */
     static final int DASHBOARD = 4077;
+    /** TCL's favorites (star) button. */
+    static final int FAVORITES = 4090;
+
+    /** The screensaver now (Free My TV's, in Free My TV mode); if the TV won't start it, the preview in Settings. */
+    static void openScreensaver(Context c) {
+        try {
+            c.startActivity(new Intent().setClassName("com.android.systemui", "com.android.systemui.Somnambulator")
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        } catch (RuntimeException e) {
+            AppLog.w("screensaver: " + e.getMessage());
+            c.startActivity(new Intent(c, SettingsActivity.class).putExtra("screensaver", true)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        }
+    }
 
     /** The key codes are TCL's: on other brands they can be other buttons, so nothing here runs there. */
     static boolean supported() {
@@ -36,6 +52,13 @@ final class RemoteKeys {
             // Pressed again with the panel open: PanelActivity closes itself (onNewIntent).
             if (e.getAction() == KeyEvent.ACTION_DOWN && e.getRepeatCount() == 0) {
                 c.startActivity(new Intent(c, PanelActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            }
+            return true;
+        }
+        if (e.getKeyCode() == FAVORITES) {
+            if (e.getAction() == KeyEvent.ACTION_DOWN && e.getRepeatCount() == 0) {
+                AppLog.w("remote key favorites -> screensaver");
+                openScreensaver(c);
             }
             return true;
         }
